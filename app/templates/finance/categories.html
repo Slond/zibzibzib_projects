@@ -1,0 +1,239 @@
+{% extends "base.html" %}
+{% block title %}Категории и теги - Финансы{% endblock %}
+
+{% block extra_styles %}
+.search-bar {
+    margin-bottom: 20px;
+}
+.search-bar input {
+    width: 100%;
+    padding: 14px 16px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 12px;
+    color: #fff;
+    font-size: 14px;
+}
+.search-bar input:focus {
+    outline: none;
+    border-color: #4361ee;
+}
+.tag-section {
+    margin-bottom: 24px;
+}
+.tag-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: rgba(255,255,255,0.03);
+    border-radius: 12px 12px 0 0;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-bottom: none;
+}
+.tag-name {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 600;
+}
+.tag-color {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+}
+.tag-actions {
+    display: flex;
+    gap: 8px;
+}
+.categories-in-tag {
+    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 0 0 12px 12px;
+    padding: 8px;
+}
+.category-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px;
+    border-radius: 8px;
+    transition: background 0.2s;
+}
+.category-item:hover {
+    background: rgba(255,255,255,0.05);
+}
+.category-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.category-name {
+    font-weight: 500;
+}
+.category-count {
+    font-size: 12px;
+    color: rgba(255,255,255,0.4);
+}
+.untagged-section {
+    margin-top: 32px;
+    padding-top: 24px;
+    border-top: 1px solid rgba(255,255,255,0.1);
+}
+.untagged-title {
+    font-size: 14px;
+    color: rgba(255,255,255,0.5);
+    margin-bottom: 16px;
+}
+.create-tag-form {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+}
+.create-tag-form input[type="text"] {
+    flex: 1;
+    min-width: 150px;
+}
+.create-tag-form input[type="color"] {
+    width: 44px;
+    height: 44px;
+    padding: 4px;
+    border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.1);
+    background: rgba(255,255,255,0.05);
+    cursor: pointer;
+}
+.tag-select {
+    padding: 6px 10px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 6px;
+    color: #fff;
+    font-size: 12px;
+}
+.empty-tag {
+    padding: 20px;
+    text-align: center;
+    color: rgba(255,255,255,0.3);
+    font-size: 13px;
+}
+{% endblock %}
+
+{% block body %}
+<div class="header">
+    <div class="header-left">
+        <a href="/finance/events" class="back-link">←</a>
+        <h1>🏷️ Категории и теги</h1>
+    </div>
+</div>
+
+<div class="content" style="padding-bottom:100px;">
+    <p style="color:rgba(255,255,255,0.5);font-size:13px;margin-bottom:20px;line-height:1.6;">
+        Теги группируют категории для удобной аналитики. Например, тег "Развлечения" может включать категории "Кино", "Рестораны", "Игры".
+    </p>
+
+    <!-- Search -->
+    <div class="search-bar">
+        <form method="GET" action="/finance/categories">
+            <input type="text" name="search" placeholder="Поиск категории..." value="{{ search }}" autocomplete="off">
+        </form>
+    </div>
+
+    <!-- Create Tag Form -->
+    <form method="POST" action="/finance/tags/create" class="create-tag-form">
+        <input type="text" name="name" placeholder="Новый тег..." required>
+        <input type="color" name="color" value="#4361ee">
+        <button type="submit" class="btn small">+ Создать тег</button>
+    </form>
+
+    <!-- Tags with categories -->
+    {% for tag in tags %}
+    <div class="tag-section">
+        <div class="tag-header">
+            <span class="tag-name">
+                <span class="tag-color" style="background:{{ tag.color or '#4361ee' }}"></span>
+                {{ tag.name }}
+            </span>
+            <div class="tag-actions">
+                <form method="POST" action="/finance/tags/{{ tag.id }}/delete" style="margin:0;">
+                    <button type="submit" class="btn small danger" onclick="return confirm('Удалить тег? Категории сохранятся.')">🗑️</button>
+                </form>
+            </div>
+        </div>
+        <div class="categories-in-tag">
+            {% set tag_categories = all_categories|selectattr('tag_id', 'equalto', tag.id)|list %}
+            {% if tag_categories %}
+                {% for cat in tag_categories %}
+                <div class="category-item">
+                    <div class="category-info">
+                        <span class="category-name">{{ cat.icon or '' }} {{ cat.name }}</span>
+                        <span class="category-count">{{ cat.usage_count }} операций</span>
+                    </div>
+                    <form method="POST" action="/finance/categories/{{ cat.id }}/set-tag" style="margin:0;">
+                        <select name="tag_id" class="tag-select" onchange="this.form.submit()">
+                            <option value="">— Без тега —</option>
+                            {% for t in tags %}
+                            <option value="{{ t.id }}" {% if t.id == cat.tag_id %}selected{% endif %}>{{ t.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </form>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="empty-tag">Перетащите категории сюда или выберите этот тег в списке категорий</div>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+
+    <!-- Untagged categories -->
+    {% if untagged_categories %}
+    <div class="untagged-section">
+        <div class="untagged-title">Без тега ({{ untagged_categories|length }})</div>
+        {% for cat in untagged_categories %}
+        <div class="category-item">
+            <div class="category-info">
+                <span class="category-name">{{ cat.icon or '' }} {{ cat.name }}</span>
+                <span class="category-count">{{ cat.usage_count }} операций</span>
+            </div>
+            <form method="POST" action="/finance/categories/{{ cat.id }}/set-tag" style="margin:0;">
+                <select name="tag_id" class="tag-select" onchange="this.form.submit()">
+                    <option value="">— Выбрать тег —</option>
+                    {% for t in tags %}
+                    <option value="{{ t.id }}">{{ t.name }}</option>
+                    {% endfor %}
+                </select>
+            </form>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if not tags and not untagged_categories %}
+    <div style="text-align:center;padding:60px 20px;color:rgba(255,255,255,0.4);">
+        Пока нет категорий.<br>
+        <small>Они появятся после добавления транзакций.</small>
+    </div>
+    {% endif %}
+</div>
+
+<nav class="nav-bottom">
+    <a href="/finance" class="nav-item">
+        <span class="nav-icon">📊</span>
+        Обзор
+    </a>
+    <a href="/finance/add" class="nav-item">
+        <span class="nav-icon">➕</span>
+        Добавить
+    </a>
+    <a href="/finance/history" class="nav-item">
+        <span class="nav-icon">📋</span>
+        История
+    </a>
+    <a href="/finance/events" class="nav-item active">
+        <span class="nav-icon">⚙️</span>
+        События
+    </a>
+</nav>
+{% endblock %}

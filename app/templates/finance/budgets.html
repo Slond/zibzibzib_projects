@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% block title %}Бюджеты - Финансы{% endblock %}
+
+{% block extra_styles %}
+.budget-card {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 16px;
+}
+.budget-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 12px;
+}
+.budget-category {
+    font-size: 18px;
+    font-weight: 600;
+}
+.budget-event {
+    font-size: 11px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    background: rgba(67, 97, 238, 0.2);
+    color: #4361ee;
+}
+.budget-amount {
+    font-size: 14px;
+    color: rgba(255,255,255,0.7);
+    margin-bottom: 12px;
+}
+.budget-progress {
+    height: 8px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 8px;
+}
+.budget-progress-bar {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.3s;
+}
+.budget-progress-bar.safe { background: #4ade80; }
+.budget-progress-bar.warning { background: #fbbf24; }
+.budget-progress-bar.danger { background: #f87171; }
+.budget-stats {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: rgba(255,255,255,0.5);
+}
+.budget-actions {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255,255,255,0.05);
+}
+.create-budget-form {
+    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 24px;
+}
+.create-budget-form h3 {
+    font-size: 16px;
+    margin-bottom: 16px;
+}
+.form-row {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+.form-row .form-group {
+    flex: 1;
+    min-width: 120px;
+    margin-bottom: 0;
+}
+.threshold-input {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.threshold-input input {
+    width: 60px;
+    text-align: center;
+}
+{% endblock %}
+
+{% block body %}
+<div class="header">
+    <div class="header-left">
+        <a href="/finance/events" class="back-link">←</a>
+        <h1>💰 Бюджеты</h1>
+    </div>
+</div>
+
+<div class="content" style="padding-bottom:100px;">
+    <p style="color:rgba(255,255,255,0.5);font-size:13px;margin-bottom:20px;line-height:1.6;">
+        Установите месячный лимит на категорию. При превышении порога (по умолчанию 70%) появится предупреждение.
+    </p>
+
+    <!-- Create Budget Form -->
+    <div class="create-budget-form">
+        <h3>➕ Новый бюджет</h3>
+        <form method="POST" action="/finance/budgets/create">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Категория</label>
+                    <select name="category_id" required>
+                        <option value="">Выберите...</option>
+                        {% for cat in categories %}
+                        <option value="{{ cat.id }}">{{ cat.icon or '' }} {{ cat.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Лимит в месяц</label>
+                    <input type="text" name="monthly_limit" placeholder="50000" inputmode="decimal" required>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Событие (опционально)</label>
+                    <select name="event_id">
+                        <option value="">Все события</option>
+                        {% for evt in events %}
+                        <option value="{{ evt.id }}">{{ evt.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Порог алерта</label>
+                    <div class="threshold-input">
+                        <input type="number" name="alert_threshold" value="70" min="50" max="100">
+                        <span>%</span>
+                    </div>
+                </div>
+            </div>
+            <button type="submit" class="btn" style="margin-top:8px;">Создать бюджет</button>
+        </form>
+    </div>
+
+    <!-- Existing Budgets -->
+    {% if budgets %}
+    <h3 style="font-size:14px;color:rgba(255,255,255,0.5);margin-bottom:16px;text-transform:uppercase;letter-spacing:1px;">
+        Активные бюджеты
+    </h3>
+    
+    {% for budget, category in budgets %}
+    <div class="budget-card">
+        <div class="budget-header">
+            <span class="budget-category">{{ category.icon or '' }} {{ category.name }}</span>
+            {% if budget.event_id %}
+            <span class="budget-event">Событие #{{ budget.event_id }}</span>
+            {% endif %}
+        </div>
+        <div class="budget-amount">
+            Лимит: {{ '{:,.0f}'.format(budget.monthly_limit|float).replace(',', ' ') }} в месяц
+        </div>
+        <div class="budget-progress">
+            <div class="budget-progress-bar safe" style="width: 0%"></div>
+        </div>
+        <div class="budget-stats">
+            <span>Потрачено: расчёт при добавлении</span>
+            <span>Алерт при {{ budget.alert_threshold }}%</span>
+        </div>
+        <div class="budget-actions">
+            <form method="POST" action="/finance/budgets/{{ budget.id }}/delete" style="margin:0;">
+                <button type="submit" class="btn small danger" onclick="return confirm('Удалить бюджет?')">
+                    🗑️ Удалить
+                </button>
+            </form>
+        </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div style="text-align:center;padding:40px 20px;color:rgba(255,255,255,0.4);">
+        Пока нет бюджетов.<br>
+        <small>Создайте первый бюджет выше.</small>
+    </div>
+    {% endif %}
+</div>
+
+<nav class="nav-bottom">
+    <a href="/finance" class="nav-item">
+        <span class="nav-icon">📊</span>
+        Обзор
+    </a>
+    <a href="/finance/add" class="nav-item">
+        <span class="nav-icon">➕</span>
+        Добавить
+    </a>
+    <a href="/finance/history" class="nav-item">
+        <span class="nav-icon">📋</span>
+        История
+    </a>
+    <a href="/finance/events" class="nav-item active">
+        <span class="nav-icon">⚙️</span>
+        События
+    </a>
+</nav>
+{% endblock %}

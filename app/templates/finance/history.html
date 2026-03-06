@@ -2,6 +2,30 @@
 {% block title %}История - Финансы{% endblock %}
 
 {% block extra_styles %}
+.event-filter {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 4px 0 12px;
+    margin-bottom: 8px;
+}
+.event-filter::-webkit-scrollbar { display: none; }
+.event-chip {
+    flex-shrink: 0;
+    padding: 8px 14px;
+    border-radius: 16px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.6);
+    font-size: 12px;
+    transition: all 0.2s;
+}
+.event-chip:hover,
+.event-chip.active {
+    background: linear-gradient(135deg, #4361ee 0%, #7209b7 100%);
+    border-color: transparent;
+    color: #fff;
+}
 .filter-bar {
     display: flex;
     gap: 8px;
@@ -26,6 +50,11 @@
     background: #4361ee;
     border-color: transparent;
     color: #fff;
+}
+.currency-badge {
+    font-size: 11px;
+    color: rgba(255,255,255,0.4);
+    margin-left: 4px;
 }
 .transactions-list {
     display: flex;
@@ -109,10 +138,25 @@
 </div>
 
 <div class="content" style="padding-bottom:100px;">
+    {% if events|length > 1 %}
+    <div class="event-filter">
+        <a href="/finance/history{% if current_category %}?category={{ current_category }}{% endif %}" 
+           class="event-chip {% if not selected_event %}active{% endif %}">Все события</a>
+        {% for evt in events %}
+        <a href="/finance/history?event={{ evt.id }}{% if current_category %}&category={{ current_category }}{% endif %}" 
+           class="event-chip {% if selected_event and selected_event.id == evt.id %}active{% endif %}">
+            {{ evt.name }}
+        </a>
+        {% endfor %}
+    </div>
+    {% endif %}
+
     <div class="filter-bar">
-        <a href="/finance/history" class="filter-chip {% if not current_category %}active{% endif %}">Все</a>
+        <a href="/finance/history{% if selected_event %}?event={{ selected_event.id }}{% endif %}" 
+           class="filter-chip {% if not current_category %}active{% endif %}">Все</a>
         {% for cat in categories %}
-        <a href="/finance/history?category={{ cat.name }}" class="filter-chip {% if current_category == cat.name %}active{% endif %}">
+        <a href="/finance/history?{% if selected_event %}event={{ selected_event.id }}&{% endif %}category={{ cat.name }}" 
+           class="filter-chip {% if current_category == cat.name %}active{% endif %}">
             {{ cat.icon or '' }} {{ cat.name }}
         </a>
         {% endfor %}
@@ -121,9 +165,9 @@
     {% if transactions %}
     <div class="transactions-list">
         {% for t in transactions %}
-        <a href="/finance/add?edit={{ t.id }}" class="transaction-item">
+        <a href="/finance/add?event={{ t.event_id or '' }}&edit={{ t.id }}" class="transaction-item">
             <div class="transaction-info">
-                <span class="transaction-merchant">{{ t.merchant or t.description or 'Операция' }}</span>
+                <span class="transaction-merchant">{{ t.description or 'Операция' }}</span>
                 <span class="transaction-meta">
                     {% if t.category %}<span class="category-chip">{{ t.category }}</span>{% endif %}
                     {{ t.timestamp.strftime('%d %b %H:%M') }}
@@ -134,17 +178,21 @@
             </div>
             <span class="transaction-amount {% if t.amount < 0 %}negative{% else %}positive{% endif %}">
                 {% if t.amount > 0 %}+{% endif %}{{ '{:,.0f}'.format(t.amount|float).replace(',', ' ') }}
+                <span class="currency-badge">{{ t.currency or '' }}</span>
             </span>
         </a>
         {% endfor %}
     </div>
 
     <div class="pagination">
-        <a href="{% if page > 1 %}/finance/history?page={{ page - 1 }}{% if current_category %}&category={{ current_category }}{% endif %}{% else %}#{% endif %}"
+        {% set base_url = '/finance/history?' %}
+        {% if selected_event %}{% set base_url = base_url ~ 'event=' ~ selected_event.id ~ '&' %}{% endif %}
+        {% if current_category %}{% set base_url = base_url ~ 'category=' ~ current_category ~ '&' %}{% endif %}
+        <a href="{% if page > 1 %}{{ base_url }}page={{ page - 1 }}{% else %}#{% endif %}"
            class="{% if page <= 1 %}disabled{% endif %}">
             ← Назад
         </a>
-        <a href="{% if has_more %}/finance/history?page={{ page + 1 }}{% if current_category %}&category={{ current_category }}{% endif %}{% else %}#{% endif %}"
+        <a href="{% if has_more %}{{ base_url }}page={{ page + 1 }}{% else %}#{% endif %}"
            class="{% if not has_more %}disabled{% endif %}">
             Далее →
         </a>
@@ -161,17 +209,17 @@
         <span class="nav-icon">📊</span>
         Обзор
     </a>
-    <a href="/finance/add" class="nav-item">
+    <a href="/finance/add{% if selected_event %}?event={{ selected_event.id }}{% endif %}" class="nav-item">
         <span class="nav-icon">➕</span>
         Добавить
+    </a>
+    <a href="/finance/analytics" class="nav-item">
+        <span class="nav-icon">📈</span>
+        Аналитика
     </a>
     <a href="/finance/history" class="nav-item active">
         <span class="nav-icon">📋</span>
         История
-    </a>
-    <a href="/finance/settings" class="nav-item">
-        <span class="nav-icon">⚙️</span>
-        Настройки
     </a>
 </nav>
 {% endblock %}

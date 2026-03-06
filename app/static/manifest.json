@@ -1,0 +1,38 @@
+{
+  "name": "Finance Tracker",
+  "short_name": "Finance",
+  "description": "Учёт личных финансов",
+  "start_url": "/finance/",
+  "display": "standalone",
+  "background_color": "#0f0f1a",
+  "theme_color": "#4361ee",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/static/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/static/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["finance", "productivity"],
+  "shortcuts": [
+    {
+      "name": "Добавить трату",
+      "short_name": "Добавить",
+      "url": "/finance/add",
+      "icons": [{"src": "/static/icon-192.png", "sizes": "192x192"}]
+    },
+    {
+      "name": "Аналитика",
+      "url": "/finance/analytics",
+      "icons": [{"src": "/static/icon-192.png", "sizes": "192x192"}]
+    }
+  ]
+}

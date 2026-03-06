@@ -1,0 +1,247 @@
+{% extends "base.html" %}
+{% block title %}Повторяющиеся траты - Финансы{% endblock %}
+
+{% block extra_styles %}
+.recurring-card {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 16px;
+}
+.recurring-card.inactive {
+    opacity: 0.5;
+}
+.recurring-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 8px;
+}
+.recurring-amount {
+    font-size: 24px;
+    font-weight: 700;
+    color: #f87171;
+}
+.recurring-amount.positive {
+    color: #4ade80;
+}
+.recurring-currency {
+    font-size: 14px;
+    color: rgba(255,255,255,0.5);
+    margin-left: 4px;
+}
+.recurring-meta {
+    font-size: 13px;
+    color: rgba(255,255,255,0.5);
+    margin-bottom: 8px;
+}
+.recurring-next {
+    font-size: 12px;
+    color: rgba(255,255,255,0.4);
+    margin-bottom: 12px;
+}
+.recurring-actions {
+    display: flex;
+    gap: 8px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255,255,255,0.05);
+}
+.create-form {
+    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 24px;
+}
+.create-form h3 {
+    font-size: 16px;
+    margin-bottom: 16px;
+}
+.form-row {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+.form-row .form-group {
+    flex: 1;
+    min-width: 120px;
+    margin-bottom: 0;
+}
+.frequency-fields {
+    display: none;
+}
+.frequency-fields.active {
+    display: flex;
+}
+.status-badge {
+    font-size: 11px;
+    padding: 4px 8px;
+    border-radius: 6px;
+}
+.status-badge.active {
+    background: rgba(74, 222, 128, 0.2);
+    color: #4ade80;
+}
+.status-badge.paused {
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.5);
+}
+{% endblock %}
+
+{% block body %}
+<div class="header">
+    <div class="header-left">
+        <a href="/finance/events" class="back-link">←</a>
+        <h1>🔄 Повторяющиеся</h1>
+    </div>
+</div>
+
+<div class="content" style="padding-bottom:100px;">
+    <p style="color:rgba(255,255,255,0.5);font-size:13px;margin-bottom:20px;line-height:1.6;">
+        Автоматическое создание транзакций по расписанию. Например, аренда, подписки, регулярные платежи.
+    </p>
+
+    <!-- Create Form -->
+    <div class="create-form">
+        <h3>➕ Новая повторяющаяся трата</h3>
+        <form method="POST" action="/finance/recurring/create">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Событие</label>
+                    <select name="event_id" required>
+                        {% for evt in events %}
+                        <option value="{{ evt.id }}">{{ evt.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Сумма</label>
+                    <input type="text" name="amount" placeholder="-15000" inputmode="decimal" required>
+                </div>
+                <div class="form-group">
+                    <label>Валюта</label>
+                    <select name="currency">
+                        {% for cur in currencies %}
+                        <option value="{{ cur }}">{{ cur }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Категория</label>
+                    <select name="category_id">
+                        <option value="">Без категории</option>
+                        {% for cat in categories %}
+                        <option value="{{ cat.id }}">{{ cat.icon or '' }} {{ cat.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Описание</label>
+                    <input type="text" name="description" placeholder="Аренда квартиры">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Периодичность</label>
+                    <select name="frequency" id="frequency-select" onchange="toggleFrequencyValue()">
+                        <option value="daily">Ежедневно</option>
+                        <option value="weekly">Еженедельно</option>
+                        <option value="monthly" selected>Ежемесячно</option>
+                        <option value="every_n_days">Каждые N дней</option>
+                    </select>
+                </div>
+                <div class="form-group frequency-fields" id="frequency-value-group">
+                    <label>Каждые N дней</label>
+                    <input type="number" name="frequency_value" value="1" min="1" max="365">
+                </div>
+            </div>
+            <button type="submit" class="btn" style="margin-top:8px;">Создать</button>
+        </form>
+    </div>
+
+    <!-- Existing Recurring -->
+    {% if recurring %}
+    <h3 style="font-size:14px;color:rgba(255,255,255,0.5);margin-bottom:16px;text-transform:uppercase;letter-spacing:1px;">
+        Активные ({{ recurring|length }})
+    </h3>
+    
+    {% for rec, event, category in recurring %}
+    <div class="recurring-card {% if not rec.is_active %}inactive{% endif %}">
+        <div class="recurring-header">
+            <div>
+                <span class="recurring-amount {% if rec.amount > 0 %}positive{% endif %}">
+                    {% if rec.amount > 0 %}+{% endif %}{{ '{:,.0f}'.format(rec.amount|float).replace(',', ' ') }}
+                    <span class="recurring-currency">{{ rec.currency }}</span>
+                </span>
+            </div>
+            <span class="status-badge {% if rec.is_active %}active{% else %}paused{% endif %}">
+                {{ 'Активно' if rec.is_active else 'Пауза' }}
+            </span>
+        </div>
+        <div class="recurring-meta">
+            {{ rec.description or 'Без описания' }}
+            {% if category %} • {{ category.icon or '' }} {{ category.name }}{% endif %}
+            • {{ event.name }}
+        </div>
+        <div class="recurring-next">
+            {{ frequency_labels.get(rec.frequency, rec.frequency) }}
+            {% if rec.frequency == 'every_n_days' %}({{ rec.frequency_value }} дн.){% endif %}
+            • Следующий: {{ rec.next_run.strftime('%d %b %Y') if rec.next_run else 'н/д' }}
+        </div>
+        <div class="recurring-actions">
+            <form method="POST" action="/finance/recurring/{{ rec.id }}/toggle" style="margin:0;">
+                <button type="submit" class="btn small secondary">
+                    {{ '⏸️ Пауза' if rec.is_active else '▶️ Возобновить' }}
+                </button>
+            </form>
+            <form method="POST" action="/finance/recurring/{{ rec.id }}/delete" style="margin:0;">
+                <button type="submit" class="btn small danger" onclick="return confirm('Удалить?')">🗑️</button>
+            </form>
+        </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div style="text-align:center;padding:40px 20px;color:rgba(255,255,255,0.4);">
+        Пока нет повторяющихся трат.<br>
+        <small>Создайте первую выше.</small>
+    </div>
+    {% endif %}
+</div>
+
+<nav class="nav-bottom">
+    <a href="/finance" class="nav-item">
+        <span class="nav-icon">📊</span>
+        Обзор
+    </a>
+    <a href="/finance/add" class="nav-item">
+        <span class="nav-icon">➕</span>
+        Добавить
+    </a>
+    <a href="/finance/history" class="nav-item">
+        <span class="nav-icon">📋</span>
+        История
+    </a>
+    <a href="/finance/events" class="nav-item active">
+        <span class="nav-icon">⚙️</span>
+        События
+    </a>
+</nav>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function toggleFrequencyValue() {
+    const freq = document.getElementById('frequency-select').value;
+    const group = document.getElementById('frequency-value-group');
+    if (freq === 'every_n_days') {
+        group.classList.add('active');
+    } else {
+        group.classList.remove('active');
+    }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,386 @@
+{% extends "base.html" %}
+{% block title %}Аналитика - Финансы{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+{% endblock %}
+
+{% block extra_styles %}
+.period-selector {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+    overflow-x: auto;
+    padding-bottom: 8px;
+}
+.period-selector::-webkit-scrollbar { display: none; }
+.period-btn {
+    flex-shrink: 0;
+    padding: 10px 16px;
+    border-radius: 20px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: rgba(255,255,255,0.7);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.period-btn:hover,
+.period-btn.active {
+    background: linear-gradient(135deg, #4361ee 0%, #7209b7 100%);
+    border-color: transparent;
+    color: #fff;
+}
+.event-filter {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+    overflow-x: auto;
+}
+.event-filter::-webkit-scrollbar { display: none; }
+.event-chip {
+    flex-shrink: 0;
+    padding: 8px 14px;
+    border-radius: 16px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.6);
+    font-size: 12px;
+    text-decoration: none;
+    transition: all 0.2s;
+}
+.event-chip:hover,
+.event-chip.active {
+    background: rgba(67, 97, 238, 0.2);
+    border-color: #4361ee;
+    color: #fff;
+}
+.chart-card {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+.chart-title {
+    font-size: 14px;
+    color: rgba(255,255,255,0.5);
+    margin-bottom: 16px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+.chart-container {
+    position: relative;
+    height: 250px;
+}
+.summary-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 24px;
+}
+.summary-card {
+    background: rgba(255,255,255,0.03);
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+}
+.summary-value {
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+.summary-value.expense { color: #f87171; }
+.summary-value.income { color: #4ade80; }
+.summary-label {
+    font-size: 11px;
+    color: rgba(255,255,255,0.5);
+    text-transform: uppercase;
+}
+.category-list {
+    margin-top: 20px;
+}
+.category-row {
+    display: flex;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.category-row:last-child {
+    border-bottom: none;
+}
+.category-bar-container {
+    flex: 1;
+    margin: 0 12px;
+}
+.category-bar {
+    height: 8px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 4px;
+    overflow: hidden;
+}
+.category-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #4361ee, #7209b7);
+    border-radius: 4px;
+}
+.category-name {
+    width: 120px;
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.category-amount {
+    width: 100px;
+    text-align: right;
+    font-size: 14px;
+    font-weight: 500;
+}
+.category-percent {
+    width: 50px;
+    text-align: right;
+    font-size: 12px;
+    color: rgba(255,255,255,0.4);
+}
+{% endblock %}
+
+{% block body %}
+<div class="header">
+    <div class="header-left">
+        <a href="/finance" class="back-link">←</a>
+        <h1>📈 Аналитика</h1>
+    </div>
+</div>
+
+<div class="content" style="padding-bottom:100px;">
+    <!-- Event Filter -->
+    {% if events|length > 1 %}
+    <div class="event-filter">
+        <a href="/finance/analytics?days={{ days }}" 
+           class="event-chip {% if not selected_event %}active{% endif %}">Все события</a>
+        {% for evt in events %}
+        <a href="/finance/analytics?event_id={{ evt.id }}&days={{ days }}" 
+           class="event-chip {% if selected_event and selected_event.id == evt.id %}active{% endif %}">
+            {{ evt.name }}
+        </a>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Period Selector -->
+    <div class="period-selector">
+        <button class="period-btn {% if days == 7 %}active{% endif %}" onclick="setPeriod(7)">7 дней</button>
+        <button class="period-btn {% if days == 30 %}active{% endif %}" onclick="setPeriod(30)">Месяц</button>
+        <button class="period-btn {% if days == 90 %}active{% endif %}" onclick="setPeriod(90)">3 месяца</button>
+        <button class="period-btn {% if days == 365 %}active{% endif %}" onclick="setPeriod(365)">Год</button>
+    </div>
+
+    <!-- Summary -->
+    <div class="summary-grid">
+        <div class="summary-card">
+            <div class="summary-value expense" id="total-expenses">...</div>
+            <div class="summary-label">Расходы</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-value income" id="total-income">...</div>
+            <div class="summary-label">Доходы</div>
+        </div>
+        <div class="summary-card">
+            <div class="summary-value" id="total-balance">...</div>
+            <div class="summary-label">Баланс</div>
+        </div>
+    </div>
+
+    <!-- Daily Chart -->
+    <div class="chart-card">
+        <div class="chart-title">Расходы по дням</div>
+        <div class="chart-container">
+            <canvas id="dailyChart"></canvas>
+        </div>
+    </div>
+
+    <!-- Category Pie Chart -->
+    <div class="chart-card">
+        <div class="chart-title">По категориям</div>
+        <div class="chart-container" style="height:200px;">
+            <canvas id="categoryChart"></canvas>
+        </div>
+        <div class="category-list" id="category-list"></div>
+    </div>
+</div>
+
+<nav class="nav-bottom">
+    <a href="/finance" class="nav-item">
+        <span class="nav-icon">📊</span>
+        Обзор
+    </a>
+    <a href="/finance/add" class="nav-item">
+        <span class="nav-icon">➕</span>
+        Добавить
+    </a>
+    <a href="/finance/analytics" class="nav-item active">
+        <span class="nav-icon">📈</span>
+        Аналитика
+    </a>
+    <a href="/finance/events" class="nav-item">
+        <span class="nav-icon">⚙️</span>
+        События
+    </a>
+</nav>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let dailyChart = null;
+let categoryChart = null;
+const eventId = {{ selected_event.id if selected_event else 'null' }};
+let currentDays = {{ days }};
+
+function setPeriod(days) {
+    const url = new URL(window.location.href);
+    url.searchParams.set('days', days);
+    window.location.href = url.toString();
+}
+
+function formatAmount(n) {
+    return new Intl.NumberFormat('ru-RU', { 
+        style: 'decimal',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0
+    }).format(n);
+}
+
+async function loadAnalytics() {
+    const params = new URLSearchParams({ days: currentDays });
+    if (eventId) params.append('event_id', eventId);
+    
+    try {
+        const [dailyRes, categoryRes] = await Promise.all([
+            fetch(`/finance/api/analytics/daily?${params}`),
+            fetch(`/finance/api/analytics/by-category?${params}`)
+        ]);
+        
+        const dailyData = await dailyRes.json();
+        const categoryData = await categoryRes.json();
+        
+        // Update summary
+        const totalExpenses = dailyData.reduce((sum, d) => sum + d.expenses, 0);
+        const totalIncome = dailyData.reduce((sum, d) => sum + d.income, 0);
+        document.getElementById('total-expenses').textContent = formatAmount(totalExpenses);
+        document.getElementById('total-income').textContent = formatAmount(totalIncome);
+        const balance = totalIncome - totalExpenses;
+        const balanceEl = document.getElementById('total-balance');
+        balanceEl.textContent = (balance >= 0 ? '+' : '') + formatAmount(balance);
+        balanceEl.style.color = balance >= 0 ? '#4ade80' : '#f87171';
+        
+        // Daily chart
+        renderDailyChart(dailyData);
+        
+        // Category chart
+        renderCategoryChart(categoryData);
+        
+    } catch (e) {
+        console.error('Failed to load analytics:', e);
+    }
+}
+
+function renderDailyChart(data) {
+    const ctx = document.getElementById('dailyChart').getContext('2d');
+    
+    if (dailyChart) dailyChart.destroy();
+    
+    dailyChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: data.map(d => d.date),
+            datasets: [
+                {
+                    label: 'Расходы',
+                    data: data.map(d => d.expenses),
+                    backgroundColor: 'rgba(248, 113, 113, 0.7)',
+                    borderRadius: 4,
+                },
+                {
+                    label: 'Доходы',
+                    data: data.map(d => d.income),
+                    backgroundColor: 'rgba(74, 222, 128, 0.7)',
+                    borderRadius: 4,
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: { color: 'rgba(255,255,255,0.7)', boxWidth: 12 }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { display: false },
+                    ticks: { color: 'rgba(255,255,255,0.4)', maxRotation: 0, autoSkip: true, maxTicksLimit: 7 }
+                },
+                y: {
+                    grid: { color: 'rgba(255,255,255,0.05)' },
+                    ticks: { color: 'rgba(255,255,255,0.4)' }
+                }
+            }
+        }
+    });
+}
+
+function renderCategoryChart(data) {
+    const ctx = document.getElementById('categoryChart').getContext('2d');
+    
+    if (categoryChart) categoryChart.destroy();
+    
+    const colors = [
+        '#4361ee', '#7209b7', '#f72585', '#4cc9f0', '#4ade80',
+        '#fbbf24', '#f87171', '#a78bfa', '#6ee7b7', '#fcd34d'
+    ];
+    
+    categoryChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: data.categories.map(c => c.category),
+            datasets: [{
+                data: data.categories.map(c => c.total),
+                backgroundColor: data.categories.map((_, i) => colors[i % colors.length]),
+                borderWidth: 0,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false }
+            },
+            cutout: '60%',
+        }
+    });
+    
+    // Render category list
+    const listHtml = data.categories.map((c, i) => `
+        <div class="category-row">
+            <span class="category-name">${c.category}</span>
+            <div class="category-bar-container">
+                <div class="category-bar">
+                    <div class="category-bar-fill" style="width:${c.percent}%;background:${colors[i % colors.length]}"></div>
+                </div>
+            </div>
+            <span class="category-amount">${formatAmount(c.total)}</span>
+            <span class="category-percent">${c.percent}%</span>
+        </div>
+    `).join('');
+    
+    document.getElementById('category-list').innerHTML = listHtml;
+}
+
+loadAnalytics();
+</script>
+{% endblock %}

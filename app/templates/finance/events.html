@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+{% block title %}События - Финансы{% endblock %}
+
+{% block extra_styles %}
+.events-grid {
+    display: grid;
+    gap: 16px;
+}
+.event-card {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 16px;
+    padding: 20px;
+    transition: all 0.2s;
+}
+.event-card:hover {
+    border-color: rgba(255,255,255,0.15);
+}
+.event-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 12px;
+}
+.event-name {
+    font-size: 18px;
+    font-weight: 600;
+    color: #fff;
+}
+.event-type {
+    font-size: 11px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    background: rgba(67, 97, 238, 0.2);
+    color: #4361ee;
+}
+.event-type.shared {
+    background: rgba(74, 222, 128, 0.2);
+    color: #4ade80;
+}
+.event-meta {
+    font-size: 13px;
+    color: rgba(255,255,255,0.5);
+    margin-bottom: 16px;
+}
+.event-actions {
+    display: flex;
+    gap: 8px;
+}
+.event-actions .btn {
+    flex: 1;
+    text-align: center;
+    font-size: 13px;
+    padding: 10px 12px;
+}
+.create-event-card {
+    border: 2px dashed rgba(255,255,255,0.1);
+    background: transparent;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 150px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.create-event-card:hover {
+    border-color: #4361ee;
+    background: rgba(67, 97, 238, 0.05);
+}
+.create-icon {
+    font-size: 32px;
+    margin-bottom: 8px;
+    opacity: 0.5;
+}
+.create-text {
+    color: rgba(255,255,255,0.5);
+    font-size: 14px;
+}
+.modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.8);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+.modal-overlay.active {
+    display: flex;
+}
+.modal-content {
+    background: #1a1a2e;
+    border-radius: 16px;
+    padding: 24px;
+    width: 100%;
+    max-width: 400px;
+}
+.modal-title {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 20px;
+}
+{% endblock %}
+
+{% block body %}
+<div class="header">
+    <div class="header-left">
+        <a href="/finance" class="back-link">←</a>
+        <h1>📋 События</h1>
+    </div>
+</div>
+
+<div class="content" style="padding-bottom:100px;">
+    <p style="color:rgba(255,255,255,0.5);font-size:13px;margin-bottom:20px;line-height:1.6;">
+        События — это отдельные таблицы расходов. Например: ежедневные траты, поездка, ремонт.
+    </p>
+
+    <div style="display:flex;gap:12px;margin-bottom:24px;flex-wrap:wrap;">
+        <a href="/finance/categories" class="btn small secondary">🏷️ Теги</a>
+        <a href="/finance/budgets" class="btn small secondary">💰 Бюджеты</a>
+        <a href="/finance/recurring" class="btn small secondary">🔄 Повторяющиеся</a>
+    </div>
+
+    <div class="events-grid">
+        {% for event in events %}
+        <div class="event-card">
+            <div class="event-card-header">
+                <span class="event-name">{{ event.name }}</span>
+                <span class="event-type {% if event.event_type == 'shared' %}shared{% endif %}">
+                    {{ 'Общее' if event.event_type == 'shared' else 'Личное' }}
+                </span>
+            </div>
+            <div class="event-meta">
+                Валюта: {{ event.default_currency }}
+            </div>
+            <div class="event-actions">
+                <a href="/finance/add?event={{ event.id }}" class="btn small">+ Добавить</a>
+                <a href="/finance/events/{{ event.id }}/settings" class="btn small secondary">⚙️ Настройки</a>
+            </div>
+        </div>
+        {% endfor %}
+        
+        <div class="event-card create-event-card" onclick="showCreateModal()">
+            <span class="create-icon">+</span>
+            <span class="create-text">Создать событие</span>
+        </div>
+    </div>
+</div>
+
+<!-- Create Event Modal -->
+<div class="modal-overlay" id="create-modal">
+    <div class="modal-content">
+        <h3 class="modal-title">Новое событие</h3>
+        <form method="POST" action="/finance/events/create">
+            <div class="form-group">
+                <label>Название</label>
+                <input type="text" name="name" placeholder="Поездка в Турцию" required>
+            </div>
+            <div class="form-group">
+                <label>Тип</label>
+                <select name="event_type">
+                    <option value="personal">Личное</option>
+                    <option value="shared">Общее (несколько участников)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Валюта по умолчанию</label>
+                <select name="default_currency">
+                    <option value="KZT">KZT</option>
+                    <option value="USD">USD</option>
+                    <option value="EUR">EUR</option>
+                    <option value="RUB">RUB</option>
+                </select>
+            </div>
+            <div style="display:flex;gap:12px;margin-top:20px;">
+                <button type="button" class="btn secondary" onclick="hideCreateModal()" style="flex:1;">Отмена</button>
+                <button type="submit" class="btn" style="flex:1;">Создать</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<nav class="nav-bottom">
+    <a href="/finance" class="nav-item">
+        <span class="nav-icon">📊</span>
+        Обзор
+    </a>
+    <a href="/finance/add" class="nav-item">
+        <span class="nav-icon">➕</span>
+        Добавить
+    </a>
+    <a href="/finance/history" class="nav-item">
+        <span class="nav-icon">📋</span>
+        История
+    </a>
+    <a href="/finance/events" class="nav-item active">
+        <span class="nav-icon">⚙️</span>
+        События
+    </a>
+</nav>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function showCreateModal() {
+    document.getElementById('create-modal').classList.add('active');
+}
+function hideCreateModal() {
+    document.getElementById('create-modal').classList.remove('active');
+}
+document.getElementById('create-modal').addEventListener('click', function(e) {
+    if (e.target === this) hideCreateModal();
+});
+</script>
+{% endblock %}

@@ -5,7 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#4361ee">
+    <link rel="manifest" href="/static/manifest.json">
+    <link rel="apple-touch-icon" href="/static/icon-192.png">
     <title>{% block title %}Base{% endblock %}</title>
+    {% block extra_head %}{% endblock %}
     <style>
         * {
             margin: 0;
@@ -147,7 +151,29 @@
     </style>
 </head>
 <body>
+    <div id="offline-indicator" style="display:none;position:fixed;top:0;left:0;right:0;background:#f87171;color:#fff;padding:8px;text-align:center;font-size:12px;z-index:9999;">
+        📴 Оффлайн режим
+    </div>
     {% block body %}{% endblock %}
     {% block extra_scripts %}{% endblock %}
+    <script>
+    // Service Worker Registration
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/static/sw.js')
+            .then((reg) => console.log('SW registered:', reg.scope))
+            .catch((err) => console.log('SW registration failed:', err));
+    }
+    
+    // Offline indicator
+    function updateOnlineStatus() {
+        const indicator = document.getElementById('offline-indicator');
+        if (indicator) {
+            indicator.style.display = navigator.onLine ? 'none' : 'block';
+        }
+    }
+    window.addEventListener('online', updateOnlineStatus);
+    window.addEventListener('offline', updateOnlineStatus);
+    updateOnlineStatus();
+    </script>
 </body>
 </html>

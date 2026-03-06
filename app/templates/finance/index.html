@@ -2,6 +2,63 @@
 {% block title %}Финансы{% endblock %}
 
 {% block extra_styles %}
+.budget-alert {
+    background: rgba(248, 113, 113, 0.1);
+    border: 1px solid rgba(248, 113, 113, 0.3);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 20px;
+}
+.budget-alert-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-weight: 600;
+    color: #f87171;
+}
+.budget-alert-text {
+    font-size: 13px;
+    color: rgba(255,255,255,0.7);
+    margin-bottom: 12px;
+}
+.budget-progress {
+    height: 6px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 3px;
+    overflow: hidden;
+}
+.budget-progress-bar {
+    height: 100%;
+    background: #f87171;
+    border-radius: 3px;
+}
+.event-selector {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 4px 0 16px;
+    margin: -4px 0 16px;
+}
+.event-selector::-webkit-scrollbar { display: none; }
+.event-chip {
+    flex-shrink: 0;
+    padding: 10px 16px;
+    border-radius: 20px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: rgba(255,255,255,0.7);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-decoration: none;
+}
+.event-chip:hover,
+.event-chip.active {
+    background: linear-gradient(135deg, #4361ee 0%, #7209b7 100%);
+    border-color: transparent;
+    color: #fff;
+}
 .stats-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -79,6 +136,11 @@
     color: #a5b4fc;
     margin-right: 8px;
 }
+.currency-badge {
+    font-size: 11px;
+    color: rgba(255,255,255,0.4);
+    margin-left: 4px;
+}
 .fab {
     position: fixed;
     bottom: 100px;
@@ -108,11 +170,33 @@
         <h1>💰 Финансы</h1>
     </div>
     <div class="header-links">
-        <a href="/finance/settings">⚙️</a>
+        <a href="/finance/events">⚙️</a>
     </div>
 </div>
 
 <div class="content" style="padding-bottom:180px;">
+    {% if budget_alert %}
+    <div class="budget-alert">
+        <div class="budget-alert-header">⚠️ Бюджет «{{ budget_alert.category }}»</div>
+        <div class="budget-alert-text">
+            Потрачено: {{ budget_alert.spent|int }} из {{ budget_alert.limit|int }}<br>
+            Осталось: {{ budget_alert.remaining|int }} ({{ (100 - budget_alert.percent)|int }}%)
+        </div>
+        <div class="budget-progress">
+            <div class="budget-progress-bar" style="width: {{ budget_alert.percent|int }}%"></div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if events|length > 1 %}
+    <div class="event-selector">
+        <span class="event-chip active" data-event-id="" onclick="selectEvent(this)">Все</span>
+        {% for evt in events %}
+        <span class="event-chip" data-event-id="{{ evt.id }}" onclick="selectEvent(this)">{{ evt.name }}</span>
+        {% endfor %}
+    </div>
+    {% endif %}
+
     <div class="stats-grid" id="stats-container">
         <div class="stat-card">
             <div class="stat-value" id="total-month">...</div>
@@ -138,59 +222,62 @@
     </div>
 </div>
 
-<a href="/finance/add" class="fab">+</a>
+<a href="/finance/add{% if events|length == 1 %}?event={{ events[0].id }}{% endif %}" class="fab">+</a>
 
 <nav class="nav-bottom">
     <a href="/finance" class="nav-item active">
         <span class="nav-icon">📊</span>
         Обзор
     </a>
-    <a href="/finance/add" class="nav-item">
+    <a href="/finance/add{% if events|length == 1 %}?event={{ events[0].id }}{% endif %}" class="nav-item">
         <span class="nav-icon">➕</span>
         Добавить
     </a>
-    <a href="/finance/history" class="nav-item">
-        <span class="nav-icon">📋</span>
-        История
+    <a href="/finance/analytics" class="nav-item">
+        <span class="nav-icon">📈</span>
+        Аналитика
     </a>
-    <a href="/finance/settings" class="nav-item">
+    <a href="/finance/events" class="nav-item">
         <span class="nav-icon">⚙️</span>
-        Настройки
+        События
     </a>
 </nav>
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
-async function loadData() {
+let currentEventId = null;
+
+async function loadData(eventId = null) {
     try {
+        let statsUrl = '/finance/api/stats?days=30';
+        let transUrl = '/finance/api/transactions?limit=10';
+        
+        if (eventId) {
+            statsUrl += `&event_id=${eventId}`;
+            transUrl += `&event_id=${eventId}`;
+        }
+        
         const [statsRes, transRes] = await Promise.all([
-            fetch('/finance/api/stats?days=30'),
-            fetch('/finance/api/transactions?limit=10')
+            fetch(statsUrl),
+            fetch(transUrl)
         ]);
         
         const stats = await statsRes.json();
         const transactions = await transRes.json();
         
-        const expenses = stats.by_category
-            .filter(c => c.total < 0)
-            .reduce((sum, c) => sum + c.total, 0);
-        const income = stats.by_category
-            .filter(c => c.total > 0)
-            .reduce((sum, c) => sum + c.total, 0);
-        
         document.getElementById('total-month').textContent = formatAmount(stats.total);
-        document.getElementById('expenses-month').textContent = formatAmount(expenses);
-        document.getElementById('income-month').textContent = formatAmount(income);
+        document.getElementById('expenses-month').textContent = formatAmount(stats.expenses);
+        document.getElementById('income-month').textContent = formatAmount(stats.income);
         
         const container = document.getElementById('transactions-container');
         if (transactions.length === 0) {
             container.innerHTML = '<div class="empty-state">Нет операций<br><small>Нажмите + чтобы добавить</small></div>';
         } else {
             container.innerHTML = transactions.map(t => `
-                <a href="/finance/add?edit=${t.id}" class="transaction-item">
+                <a href="/finance/add?event=${t.event_id || ''}&edit=${t.id}" class="transaction-item">
                     <div class="transaction-info">
-                        <span class="transaction-merchant">${t.merchant || t.description || 'Операция'}</span>
+                        <span class="transaction-merchant">${t.description || 'Операция'}</span>
                         <span class="transaction-meta">
                             ${t.category ? `<span class="category-chip">${t.category}</span>` : ''}
                             ${formatDate(t.timestamp)}
@@ -198,6 +285,7 @@ async function loadData() {
                     </div>
                     <span class="transaction-amount ${t.amount < 0 ? 'negative' : 'positive'}">
                         ${t.amount > 0 ? '+' : ''}${formatAmount(t.amount)}
+                        <span class="currency-badge">${t.currency || ''}</span>
                     </span>
                 </a>
             `).join('');
@@ -205,6 +293,13 @@ async function loadData() {
     } catch (e) {
         console.error('Failed to load data:', e);
     }
+}
+
+function selectEvent(el) {
+    document.querySelectorAll('.event-chip').forEach(c => c.classList.remove('active'));
+    el.classList.add('active');
+    currentEventId = el.dataset.eventId || null;
+    loadData(currentEventId);
 }
 
 function formatAmount(n) {

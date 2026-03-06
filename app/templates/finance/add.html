@@ -3,10 +3,15 @@
 
 {% block extra_styles %}
 .amount-input-container {
-    margin-bottom: 32px;
+    margin-bottom: 24px;
+}
+.amount-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
 }
 .amount-input {
-    width: 100%;
+    flex: 1;
     text-align: center;
     font-size: 48px;
     font-weight: 700;
@@ -20,6 +25,21 @@
 }
 .amount-input::placeholder {
     color: rgba(255,255,255,0.2);
+}
+.currency-select {
+    font-size: 18px;
+    font-weight: 600;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 8px;
+    color: #fff;
+    padding: 12px 16px;
+    cursor: pointer;
+    min-width: 80px;
+}
+.currency-select:focus {
+    outline: none;
+    border-color: #4361ee;
 }
 .type-toggle {
     display: flex;
@@ -48,6 +68,20 @@
 .type-btn.income.active {
     border-color: #4ade80;
     background: rgba(74, 222, 128, 0.1);
+}
+.event-select {
+    width: 100%;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 12px;
+    color: #fff;
+    padding: 14px 16px;
+    font-size: 14px;
+    margin-bottom: 20px;
+}
+.event-select:focus {
+    outline: none;
+    border-color: #4361ee;
 }
 .categories-scroll {
     display: flex;
@@ -88,6 +122,13 @@
     gap: 12px;
 }
 .actions-bottom .btn { flex: 1; }
+.custom-currency {
+    margin-top: 8px;
+}
+.custom-currency input {
+    width: 100%;
+    text-transform: uppercase;
+}
 {% endblock %}
 
 {% block body %}
@@ -111,20 +152,53 @@
         <input type="hidden" name="transaction_id" value="{{ transaction.id }}">
         {% endif %}
 
+        <!-- Event selector -->
+        {% if events|length > 1 %}
+        <select name="event_id" class="event-select" id="event-select">
+            {% for evt in events %}
+            <option value="{{ evt.id }}" 
+                    data-currency="{{ evt.default_currency }}"
+                    {% if selected_event and selected_event.id == evt.id %}selected{% endif %}>
+                {{ evt.name }}
+            </option>
+            {% endfor %}
+        </select>
+        {% else %}
+        <input type="hidden" name="event_id" value="{{ selected_event.id if selected_event else '' }}">
+        {% endif %}
+
         <div class="type-toggle">
             <button type="button" class="type-btn expense active" onclick="setType('expense')">Расход</button>
             <button type="button" class="type-btn income" onclick="setType('income')">Доход</button>
         </div>
 
         <div class="amount-input-container">
-            <input type="text" 
-                   name="amount" 
-                   class="amount-input" 
-                   placeholder="0" 
-                   inputmode="decimal"
-                   id="amount-input"
-                   value="{{ transaction.amount|abs if transaction else '' }}"
-                   required>
+            <div class="amount-row">
+                <input type="text" 
+                       name="amount" 
+                       class="amount-input" 
+                       placeholder="0" 
+                       inputmode="decimal"
+                       id="amount-input"
+                       value="{{ transaction.amount|abs if transaction else '' }}"
+                       required>
+                <select name="currency" class="currency-select" id="currency-select">
+                    {% for cur in currencies %}
+                    <option value="{{ cur }}" 
+                            {% if (transaction and transaction.currency == cur) or (not transaction and cur == default_currency) %}selected{% endif %}>
+                        {{ cur }}
+                    </option>
+                    {% endfor %}
+                    <option value="other">Другая...</option>
+                </select>
+            </div>
+            <div class="custom-currency" id="custom-currency-row" style="display:none;">
+                <input type="text" 
+                       id="custom-currency-input"
+                       placeholder="Код валюты (USD, EUR...)" 
+                       maxlength="3"
+                       pattern="[A-Za-z]{3}">
+            </div>
         </div>
 
         <div class="form-group">
@@ -146,11 +220,6 @@
         </div>
 
         <div class="form-group">
-            <label>Магазин / Получатель</label>
-            <input type="text" name="merchant" placeholder="Где покупка" value="{{ transaction.merchant or '' }}">
-        </div>
-
-        <div class="form-group">
             <label>Описание</label>
             <input type="text" name="description" placeholder="Комментарий (опционально)" value="{{ transaction.description or '' }}">
         </div>
@@ -168,6 +237,10 @@
 {% block extra_scripts %}
 <script>
 let isExpense = true;
+const currencySelect = document.getElementById('currency-select');
+const customCurrencyRow = document.getElementById('custom-currency-row');
+const customCurrencyInput = document.getElementById('custom-currency-input');
+const eventSelect = document.getElementById('event-select');
 
 {% if transaction and transaction.amount > 0 %}
 isExpense = false;
@@ -188,6 +261,27 @@ function selectCategory(btn, name) {
     document.getElementById('category-input').value = name;
 }
 
+// Currency selector
+currencySelect.addEventListener('change', function() {
+    if (this.value === 'other') {
+        customCurrencyRow.style.display = 'block';
+        customCurrencyInput.focus();
+    } else {
+        customCurrencyRow.style.display = 'none';
+    }
+});
+
+// Event selector - update default currency
+if (eventSelect) {
+    eventSelect.addEventListener('change', function() {
+        const selectedOption = this.options[this.selectedIndex];
+        const defaultCurrency = selectedOption.dataset.currency;
+        if (defaultCurrency && currencySelect.value !== 'other') {
+            currencySelect.value = defaultCurrency;
+        }
+    });
+}
+
 document.getElementById('add-form').addEventListener('submit', function(e) {
     const amountInput = document.getElementById('amount-input');
     let val = amountInput.value.replace(/[^\d.,]/g, '').replace(',', '.');
@@ -199,6 +293,11 @@ document.getElementById('add-form').addEventListener('submit', function(e) {
     if (isExpense && amount > 0) amount = -amount;
     if (!isExpense && amount < 0) amount = -amount;
     amountInput.value = amount.toString();
+    
+    // Handle custom currency
+    if (currencySelect.value === 'other' && customCurrencyInput.value) {
+        currencySelect.value = customCurrencyInput.value.toUpperCase();
+    }
 });
 
 document.getElementById('amount-input').addEventListener('focus', function() {

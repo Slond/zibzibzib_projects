@@ -8,6 +8,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -21,7 +22,7 @@ from app.auth import (
     ensure_admin_exists,
     SESSION_COOKIE,
 )
-from app.services.scheduler import poll_yandex_devices
+from app.services.scheduler import poll_yandex_devices, process_recurring_transactions
 from app.routers import dashboard, finance, weather
 
 logging.basicConfig(
@@ -50,11 +51,21 @@ async def lifespan(app: FastAPI):
             id="poll_yandex",
             replace_existing=True,
         )
-        scheduler.start()
-        logger.info(f"Scheduler started, polling every {POLL_INTERVAL_SECONDS}s")
         await poll_yandex_devices()
+        logger.info(f"Weather polling every {POLL_INTERVAL_SECONDS}s")
     else:
         logger.warning("YANDEX_TOKEN not set, weather polling disabled")
+    
+    # Recurring transactions - run every hour
+    scheduler.add_job(
+        process_recurring_transactions,
+        "interval",
+        hours=1,
+        id="process_recurring",
+        replace_existing=True,
+    )
+    scheduler.start()
+    logger.info("Scheduler started")
 
     yield
 
@@ -64,6 +75,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Main Project", lifespan=lifespan)
+
+# Mount static files for PWA
+app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 
 app.include_router(dashboard.router)
 app.include_router(finance.router)

@@ -12,6 +12,8 @@ from app.database import (
     Service,
     UserServiceAccess,
     FinanceAccount,
+    FinanceEvent,
+    FinanceEventMember,
     generate_webhook_token,
 )
 
@@ -149,6 +151,16 @@ async def ensure_admin_exists():
             session.add(finance_account)
             await session.flush()
 
+            # Create default finance event
+            default_event = FinanceEvent(
+                account_id=finance_account.id,
+                name="Ежедневные траты",
+                event_type="personal",
+                default_currency="KZT",
+                is_active=True,
+            )
+            session.add(default_event)
+
             admin = User(
                 email=ADMIN_EMAIL,
                 password_hash=hash_password(ADMIN_PASSWORD),
@@ -267,14 +279,6 @@ async def revoke_service_access(user_id: int, service_id: int):
             await session.commit()
 
 
-async def get_finance_account_by_webhook(token: str) -> FinanceAccount | None:
-    async with async_session() as session:
-        result = await session.execute(
-            select(FinanceAccount).where(FinanceAccount.webhook_token == token)
-        )
-        return result.scalar_one_or_none()
-
-
 async def get_finance_account_by_id(account_id: int) -> FinanceAccount | None:
     async with async_session() as session:
         result = await session.execute(
@@ -283,14 +287,92 @@ async def get_finance_account_by_id(account_id: int) -> FinanceAccount | None:
         return result.scalar_one_or_none()
 
 
-async def regenerate_finance_webhook_token(account_id: int) -> str | None:
+async def get_finance_event_by_webhook(token: str) -> FinanceEvent | None:
+    """Get finance event by webhook token"""
     async with async_session() as session:
         result = await session.execute(
-            select(FinanceAccount).where(FinanceAccount.id == account_id)
+            select(FinanceEvent).where(FinanceEvent.webhook_token == token)
         )
-        account = result.scalar_one_or_none()
-        if account:
-            account.webhook_token = generate_webhook_token()
+        return result.scalar_one_or_none()
+
+
+async def get_finance_event_by_id(event_id: int) -> FinanceEvent | None:
+    """Get finance event by ID"""
+    async with async_session() as session:
+        result = await session.execute(
+            select(FinanceEvent).where(FinanceEvent.id == event_id)
+        )
+        return result.scalar_one_or_none()
+
+
+async def get_user_events(user_id: int, account_id: int) -> list[FinanceEvent]:
+    """Get all events user has access to (owned + member)"""
+    async with async_session() as session:
+        user_result = await session.execute(select(User).where(User.id == user_id))
+        user = user_result.scalar_one_or_none()
+        
+        if not user:
+            return []
+        
+        # Get events owned by user's account
+        owned_events = await session.execute(
+            select(FinanceEvent)
+            .where(
+                FinanceEvent.account_id == account_id,
+                FinanceEvent.is_archived == False,
+            )
+            .order_by(FinanceEvent.created_at.desc())
+        )
+        owned = list(owned_events.scalars().all())
+        
+        # Get events where user is a member (shared events)
+        member_events = await session.execute(
+            select(FinanceEvent)
+            .join(FinanceEventMember, FinanceEvent.id == FinanceEventMember.event_id)
+            .where(
+                FinanceEventMember.user_id == user_id,
+                FinanceEvent.is_archived == False,
+            )
+            .order_by(FinanceEvent.created_at.desc())
+        )
+        member = list(member_events.scalars().all())
+        
+        # Combine and deduplicate
+        seen_ids = set()
+        result = []
+        for event in owned + member:
+            if event.id not in seen_ids:
+                seen_ids.add(event.id)
+                result.append(event)
+        
+        return result
+
+
+async def regenerate_event_webhook_token(event_id: int) -> str | None:
+    """Regenerate webhook token for an event"""
+    async with async_session() as session:
+        result = await session.execute(
+            select(FinanceEvent).where(FinanceEvent.id == event_id)
+        )
+        event = result.scalar_one_or_none()
+        if event:
+            event.webhook_token = generate_webhook_token()
             await session.commit()
-            return account.webhook_token
+            return event.webhook_token
         return None
+
+
+async def create_default_event(account_id: int) -> FinanceEvent:
+    """Create default 'Daily expenses' event for new account"""
+    async with async_session() as session:
+        event = FinanceEvent(
+            account_id=account_id,
+            name="Ежедневные траты",
+            event_type="personal",
+            default_currency="KZT",
+            is_active=True,
+        )
+        session.add(event)
+        await session.commit()
+        await session.refresh(event)
+        return event

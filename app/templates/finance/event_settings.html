@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% block title %}{{ event.name }} - Настройки{% endblock %}
+
+{% block extra_styles %}
+.webhook-box {
+    background: rgba(0,0,0,0.2);
+    border-radius: 12px;
+    padding: 16px;
+    margin-top: 16px;
+}
+.webhook-url {
+    font-family: monospace;
+    font-size: 11px;
+    word-break: break-all;
+    color: rgba(255,255,255,0.7);
+    background: rgba(0,0,0,0.3);
+    padding: 12px;
+    border-radius: 8px;
+    margin: 12px 0;
+}
+.danger-zone {
+    border: 1px solid rgba(248, 113, 113, 0.3);
+    border-radius: 12px;
+    padding: 16px;
+    margin-top: 24px;
+}
+.danger-zone h4 {
+    color: #f87171;
+    font-size: 14px;
+    margin-bottom: 12px;
+}
+.members-list {
+    margin-top: 16px;
+}
+.member-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.member-item:last-child {
+    border-bottom: none;
+}
+{% endblock %}
+
+{% block body %}
+<div class="header">
+    <div class="header-left">
+        <a href="/finance/events" class="back-link">←</a>
+        <h1>⚙️ {{ event.name }}</h1>
+    </div>
+</div>
+
+<div class="content" style="padding-bottom:100px;">
+    <!-- Basic Settings -->
+    <div class="card">
+        <h3 style="margin-bottom:16px;font-size:16px;">Основные настройки</h3>
+        <form method="POST" action="/finance/events/{{ event.id }}/settings">
+            <div class="form-group">
+                <label>Название</label>
+                <input type="text" name="name" value="{{ event.name }}" required>
+            </div>
+            <div class="form-group">
+                <label>Валюта по умолчанию</label>
+                <select name="default_currency">
+                    {% for cur in currencies %}
+                    <option value="{{ cur }}" {% if event.default_currency == cur %}selected{% endif %}>{{ cur }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="submit" class="btn" style="margin-top:12px;">Сохранить</button>
+        </form>
+    </div>
+
+    <!-- Webhook Settings -->
+    <div class="card">
+        <h3 style="margin-bottom:8px;font-size:16px;">🔗 Webhook для iOS Shortcuts</h3>
+        <p style="color:rgba(255,255,255,0.5);font-size:13px;line-height:1.6;">
+            Используйте этот URL в iOS Shortcuts. Транзакции будут создаваться в этом событии.
+        </p>
+        
+        <div class="webhook-box">
+            <div class="webhook-url" id="webhook-url">
+                {{ request.url.scheme }}://{{ request.url.netloc }}/finance/api/webhook/{{ event.webhook_token }}
+            </div>
+            <div style="display:flex;gap:8px;">
+                <button type="button" class="btn small" onclick="copyUrl()">📋 Скопировать</button>
+                <form method="POST" action="/finance/events/{{ event.id }}/regenerate-token" style="margin:0;">
+                    <button type="submit" class="btn small danger" onclick="return confirm('Старая ссылка перестанет работать. Продолжить?')">
+                        🔄 Новый токен
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Shortcuts Instructions -->
+    <div class="card">
+        <h3 style="margin-bottom:16px;font-size:16px;">📱 Инструкция iOS Shortcuts</h3>
+        <ol style="color:rgba(255,255,255,0.7);font-size:13px;line-height:1.8;padding-left:20px;">
+            <li>Откройте <strong>Shortcuts</strong></li>
+            <li>Создайте новый Shortcut (+)</li>
+            <li>Добавьте <strong>"URL"</strong> → вставьте Webhook URL</li>
+            <li>Добавьте <strong>"Get Contents of URL"</strong>:
+                <ul style="margin:8px 0;padding-left:16px;">
+                    <li>URL: переменная URL из шага 3</li>
+                    <li>Method: <strong>POST</strong></li>
+                </ul>
+            </li>
+            <li>Добавьте <strong>"URL"</strong> → <code>{{ request.url.scheme }}://{{ request.url.netloc }}/finance/add?event={{ event.id }}</code></li>
+            <li>Добавьте <strong>"Open URL"</strong> → переменная URL из шага 5</li>
+            <li>Сохраните Shortcut</li>
+            <li>В <strong>Automation</strong> → добавьте триггер на уведомление от банка</li>
+        </ol>
+    </div>
+
+    {% if event.event_type == 'shared' %}
+    <!-- Members (for shared events) -->
+    <div class="card">
+        <h3 style="margin-bottom:16px;font-size:16px;">👥 Участники</h3>
+        <p style="color:rgba(255,255,255,0.5);font-size:13px;margin-bottom:16px;">
+            Участники могут добавлять транзакции в это событие.
+        </p>
+        <div class="members-list">
+            {% for member in members %}
+            <div class="member-item">
+                <span>{{ member.user.email if member.user else 'Unknown' }}</span>
+                <span style="color:rgba(255,255,255,0.4);font-size:12px;">{{ member.role }}</span>
+            </div>
+            {% else %}
+            <p style="color:rgba(255,255,255,0.4);font-size:13px;">Пока только вы</p>
+            {% endfor %}
+        </div>
+        <!-- TODO: Add member invitation form -->
+    </div>
+    {% endif %}
+
+    <!-- Danger Zone -->
+    <div class="danger-zone">
+        <h4>⚠️ Опасная зона</h4>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;">
+            <form method="POST" action="/finance/events/{{ event.id }}/archive">
+                <button type="submit" class="btn small danger" onclick="return confirm('Архивировать событие? Оно исчезнет из списка, но данные сохранятся.')">
+                    📦 Архивировать
+                </button>
+            </form>
+            <form method="POST" action="/finance/events/{{ event.id }}/delete">
+                <button type="submit" class="btn small danger" onclick="return confirm('УДАЛИТЬ событие и ВСЕ транзакции? Это действие необратимо!')">
+                    🗑️ Удалить навсегда
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<nav class="nav-bottom">
+    <a href="/finance" class="nav-item">
+        <span class="nav-icon">📊</span>
+        Обзор
+    </a>
+    <a href="/finance/add?event={{ event.id }}" class="nav-item">
+        <span class="nav-icon">➕</span>
+        Добавить
+    </a>
+    <a href="/finance/history?event={{ event.id }}" class="nav-item">
+        <span class="nav-icon">📋</span>
+        История
+    </a>
+    <a href="/finance/events" class="nav-item active">
+        <span class="nav-icon">⚙️</span>
+        События
+    </a>
+</nav>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function copyUrl() {
+    const url = document.getElementById('webhook-url').textContent.trim();
+    navigator.clipboard.writeText(url).then(() => {
+        alert('URL скопирован!');
+    });
+}
+</script>
+{% endblock %}
