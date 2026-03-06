@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %}История - Финансы{% endblock %}
+
+{% block extra_styles %}
+.filter-bar {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 4px 0 20px;
+    margin-bottom: 16px;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+.filter-bar::-webkit-scrollbar { display: none; }
+.filter-chip {
+    flex-shrink: 0;
+    padding: 8px 16px;
+    border-radius: 20px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: rgba(255,255,255,0.7);
+    font-size: 13px;
+    transition: all 0.2s;
+}
+.filter-chip:hover,
+.filter-chip.active {
+    background: #4361ee;
+    border-color: transparent;
+    color: #fff;
+}
+.transactions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.transaction-item {
+    background: rgba(255,255,255,0.05);
+    border-radius: 12px;
+    padding: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: background 0.2s;
+}
+.transaction-item:hover {
+    background: rgba(255,255,255,0.08);
+}
+.transaction-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.transaction-merchant { font-weight: 500; }
+.transaction-meta {
+    font-size: 12px;
+    color: rgba(255,255,255,0.4);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.transaction-amount {
+    font-size: 18px;
+    font-weight: 600;
+}
+.transaction-amount.negative { color: #f87171; }
+.transaction-amount.positive { color: #4ade80; }
+.category-chip {
+    display: inline-block;
+    padding: 3px 8px;
+    background: rgba(67, 97, 238, 0.2);
+    border-radius: 10px;
+    font-size: 11px;
+    color: #a5b4fc;
+}
+.pagination {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    padding: 24px 0;
+}
+.pagination a {
+    padding: 10px 20px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 8px;
+    font-size: 14px;
+    color: rgba(255,255,255,0.7);
+    transition: all 0.2s;
+}
+.pagination a:hover {
+    background: #4361ee;
+    color: #fff;
+}
+.pagination a.disabled {
+    opacity: 0.3;
+    pointer-events: none;
+}
+.empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: rgba(255,255,255,0.4);
+}
+{% endblock %}
+
+{% block body %}
+<div class="header">
+    <div class="header-left">
+        <a href="/finance" class="back-link">←</a>
+        <h1>📋 История</h1>
+    </div>
+</div>
+
+<div class="content" style="padding-bottom:100px;">
+    <div class="filter-bar">
+        <a href="/finance/history" class="filter-chip {% if not current_category %}active{% endif %}">Все</a>
+        {% for cat in categories %}
+        <a href="/finance/history?category={{ cat.name }}" class="filter-chip {% if current_category == cat.name %}active{% endif %}">
+            {{ cat.icon or '' }} {{ cat.name }}
+        </a>
+        {% endfor %}
+    </div>
+
+    {% if transactions %}
+    <div class="transactions-list">
+        {% for t in transactions %}
+        <a href="/finance/add?edit={{ t.id }}" class="transaction-item">
+            <div class="transaction-info">
+                <span class="transaction-merchant">{{ t.merchant or t.description or 'Операция' }}</span>
+                <span class="transaction-meta">
+                    {% if t.category %}<span class="category-chip">{{ t.category }}</span>{% endif %}
+                    {{ t.timestamp.strftime('%d %b %H:%M') }}
+                    {% if t.source == 'shortcut' %}
+                    <span style="color:#4361ee;">• shortcut</span>
+                    {% endif %}
+                </span>
+            </div>
+            <span class="transaction-amount {% if t.amount < 0 %}negative{% else %}positive{% endif %}">
+                {% if t.amount > 0 %}+{% endif %}{{ '{:,.0f}'.format(t.amount|float).replace(',', ' ') }}
+            </span>
+        </a>
+        {% endfor %}
+    </div>
+
+    <div class="pagination">
+        <a href="{% if page > 1 %}/finance/history?page={{ page - 1 }}{% if current_category %}&category={{ current_category }}{% endif %}{% else %}#{% endif %}"
+           class="{% if page <= 1 %}disabled{% endif %}">
+            ← Назад
+        </a>
+        <a href="{% if has_more %}/finance/history?page={{ page + 1 }}{% if current_category %}&category={{ current_category }}{% endif %}{% else %}#{% endif %}"
+           class="{% if not has_more %}disabled{% endif %}">
+            Далее →
+        </a>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        Нет операций{% if current_category %} в категории "{{ current_category }}"{% endif %}
+    </div>
+    {% endif %}
+</div>
+
+<nav class="nav-bottom">
+    <a href="/finance" class="nav-item">
+        <span class="nav-icon">📊</span>
+        Обзор
+    </a>
+    <a href="/finance/add" class="nav-item">
+        <span class="nav-icon">➕</span>
+        Добавить
+    </a>
+    <a href="/finance/history" class="nav-item active">
+        <span class="nav-icon">📋</span>
+        История
+    </a>
+    <a href="/finance/settings" class="nav-item">
+        <span class="nav-icon">⚙️</span>
+        Настройки
+    </a>
+</nav>
+{% endblock %}

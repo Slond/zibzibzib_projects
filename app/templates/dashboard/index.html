@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+
+{% block extra_styles %}
+.welcome {
+    text-align: center;
+    margin-bottom: 48px;
+    padding-top: 20px;
+}
+.welcome h2 {
+    font-size: 32px;
+    font-weight: 700;
+    margin-bottom: 12px;
+    background: linear-gradient(135deg, #fff 0%, rgba(255,255,255,0.7) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+.welcome p {
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 16px;
+}
+.services-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 20px;
+}
+.service-card {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 20px;
+    padding: 28px;
+    transition: all 0.3s;
+    display: block;
+}
+.service-card:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(67, 97, 238, 0.5);
+    transform: translateY(-4px);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+.service-icon {
+    width: 56px;
+    height: 56px;
+    background: linear-gradient(135deg, #4361ee 0%, #7209b7 100%);
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 26px;
+    margin-bottom: 20px;
+}
+.service-name {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+.service-description {
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 14px;
+    line-height: 1.5;
+}
+.service-role {
+    display: inline-block;
+    margin-top: 16px;
+    padding: 6px 12px;
+    background: rgba(67, 97, 238, 0.2);
+    border-radius: 6px;
+    font-size: 12px;
+    color: #a5b4fc;
+}
+.empty-state {
+    text-align: center;
+    padding: 80px 20px;
+}
+.empty-icon {
+    font-size: 64px;
+    margin-bottom: 24px;
+    opacity: 0.5;
+}
+.empty-state h3 {
+    font-size: 20px;
+    margin-bottom: 12px;
+    color: rgba(255, 255, 255, 0.7);
+}
+.empty-state p {
+    color: rgba(255, 255, 255, 0.4);
+    font-size: 14px;
+}
+{% endblock %}
+
+{% block body %}
+<div class="header">
+    <div class="header-left">
+        <h1>🏠 Main Project</h1>
+    </div>
+    <div class="header-links">
+        <span style="background:rgba(255,255,255,0.1);padding:8px 14px;border-radius:8px;font-size:13px;">
+            {{ user.name or user.email }}
+        </span>
+        {% if user.is_admin %}
+        <a href="/admin">Админка</a>
+        {% endif %}
+        <a href="/logout">Выйти</a>
+    </div>
+</div>
+
+<div class="content">
+    <div class="welcome">
+        <h2>Добро пожаловать!</h2>
+        <p>Выберите сервис для перехода</p>
+    </div>
+
+    {% if services %}
+    <div class="services-grid">
+        {% for item in services %}
+        <a href="{{ item.service.route }}" class="service-card">
+            <div class="service-icon">{{ item.service.icon or '📱' }}</div>
+            <div class="service-name">{{ item.service.name }}</div>
+            <div class="service-description">{{ item.service.description or 'Нет описания' }}</div>
+            <div class="service-role">{{ 'Админ' if item.role == 'admin' else 'Пользователь' }}</div>
+        </a>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <div class="empty-icon">🔒</div>
+        <h3>Нет доступных сервисов</h3>
+        <p>Обратитесь к администратору для получения доступа</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,22 @@
+services:
+  app:
+    build: .
+    container_name: main-project
+    restart: unless-stopped
+    ports:
+      - "8199:8199"
+    environment:
+      - SECRET_KEY=${SECRET_KEY}
+      - DATABASE_URL=sqlite+aiosqlite:///./data/main-project.db
+      - ADMIN_EMAIL=${ADMIN_EMAIL}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - YANDEX_TOKEN=${YANDEX_TOKEN}
+      - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS}
+    volumes:
+      - ./data:/app/data
+    networks:
+      - web_net
+
+networks:
+  web_net:
+    external: true

@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+{% block title %}Финансы{% endblock %}
+
+{% block extra_styles %}
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 16px;
+    margin-bottom: 28px;
+}
+.stat-card {
+    background: rgba(255,255,255,0.05);
+    border-radius: 16px;
+    padding: 20px;
+    text-align: center;
+}
+.stat-value {
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+.stat-label {
+    font-size: 12px;
+    color: rgba(255,255,255,0.5);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.stat-card.expense .stat-value { color: #f87171; }
+.stat-card.income .stat-value { color: #4ade80; }
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+.section-title {
+    font-size: 14px;
+    color: rgba(255,255,255,0.5);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+.transactions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.transaction-item {
+    background: rgba(255,255,255,0.05);
+    border-radius: 12px;
+    padding: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.transaction-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.transaction-merchant {
+    font-weight: 500;
+}
+.transaction-meta {
+    font-size: 12px;
+    color: rgba(255,255,255,0.4);
+}
+.transaction-amount {
+    font-size: 18px;
+    font-weight: 600;
+}
+.transaction-amount.negative { color: #f87171; }
+.transaction-amount.positive { color: #4ade80; }
+.category-chip {
+    display: inline-block;
+    padding: 4px 10px;
+    background: rgba(67, 97, 238, 0.2);
+    border-radius: 12px;
+    font-size: 11px;
+    color: #a5b4fc;
+    margin-right: 8px;
+}
+.fab {
+    position: fixed;
+    bottom: 100px;
+    right: 20px;
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #4361ee 0%, #7209b7 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+    box-shadow: 0 10px 30px rgba(67, 97, 238, 0.5);
+    z-index: 100;
+}
+.empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: rgba(255,255,255,0.4);
+}
+{% endblock %}
+
+{% block body %}
+<div class="header">
+    <div class="header-left">
+        <a href="/" class="back-link">←</a>
+        <h1>💰 Финансы</h1>
+    </div>
+    <div class="header-links">
+        <a href="/finance/settings">⚙️</a>
+    </div>
+</div>
+
+<div class="content" style="padding-bottom:180px;">
+    <div class="stats-grid" id="stats-container">
+        <div class="stat-card">
+            <div class="stat-value" id="total-month">...</div>
+            <div class="stat-label">Этот месяц</div>
+        </div>
+        <div class="stat-card expense">
+            <div class="stat-value" id="expenses-month">...</div>
+            <div class="stat-label">Расходы</div>
+        </div>
+        <div class="stat-card income">
+            <div class="stat-value" id="income-month">...</div>
+            <div class="stat-label">Доходы</div>
+        </div>
+    </div>
+
+    <div class="section-header">
+        <span class="section-title">Последние операции</span>
+        <a href="/finance/history" style="font-size:13px;color:#4361ee;">Все →</a>
+    </div>
+
+    <div class="transactions-list" id="transactions-container">
+        <div class="empty-state">Загрузка...</div>
+    </div>
+</div>
+
+<a href="/finance/add" class="fab">+</a>
+
+<nav class="nav-bottom">
+    <a href="/finance" class="nav-item active">
+        <span class="nav-icon">📊</span>
+        Обзор
+    </a>
+    <a href="/finance/add" class="nav-item">
+        <span class="nav-icon">➕</span>
+        Добавить
+    </a>
+    <a href="/finance/history" class="nav-item">
+        <span class="nav-icon">📋</span>
+        История
+    </a>
+    <a href="/finance/settings" class="nav-item">
+        <span class="nav-icon">⚙️</span>
+        Настройки
+    </a>
+</nav>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+async function loadData() {
+    try {
+        const [statsRes, transRes] = await Promise.all([
+            fetch('/finance/api/stats?days=30'),
+            fetch('/finance/api/transactions?limit=10')
+        ]);
+        
+        const stats = await statsRes.json();
+        const transactions = await transRes.json();
+        
+        const expenses = stats.by_category
+            .filter(c => c.total < 0)
+            .reduce((sum, c) => sum + c.total, 0);
+        const income = stats.by_category
+            .filter(c => c.total > 0)
+            .reduce((sum, c) => sum + c.total, 0);
+        
+        document.getElementById('total-month').textContent = formatAmount(stats.total);
+        document.getElementById('expenses-month').textContent = formatAmount(expenses);
+        document.getElementById('income-month').textContent = formatAmount(income);
+        
+        const container = document.getElementById('transactions-container');
+        if (transactions.length === 0) {
+            container.innerHTML = '<div class="empty-state">Нет операций<br><small>Нажмите + чтобы добавить</small></div>';
+        } else {
+            container.innerHTML = transactions.map(t => `
+                <a href="/finance/add?edit=${t.id}" class="transaction-item">
+                    <div class="transaction-info">
+                        <span class="transaction-merchant">${t.merchant || t.description || 'Операция'}</span>
+                        <span class="transaction-meta">
+                            ${t.category ? `<span class="category-chip">${t.category}</span>` : ''}
+                            ${formatDate(t.timestamp)}
+                        </span>
+                    </div>
+                    <span class="transaction-amount ${t.amount < 0 ? 'negative' : 'positive'}">
+                        ${t.amount > 0 ? '+' : ''}${formatAmount(t.amount)}
+                    </span>
+                </a>
+            `).join('');
+        }
+    } catch (e) {
+        console.error('Failed to load data:', e);
+    }
+}
+
+function formatAmount(n) {
+    return new Intl.NumberFormat('ru-RU', { 
+        style: 'decimal',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0
+    }).format(n);
+}
+
+function formatDate(iso) {
+    const d = new Date(iso);
+    return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+loadData();
+</script>
+{% endblock %}

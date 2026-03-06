@@ -1,0 +1,414 @@
+{% extends "base.html" %}
+{% block title %}Админка{% endblock %}
+
+{% block extra_styles %}
+.tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 24px;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    padding-bottom: 16px;
+}
+.tab {
+    padding: 10px 20px;
+    background: rgba(255,255,255,0.05);
+    border: none;
+    border-radius: 8px;
+    color: rgba(255,255,255,0.7);
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.tab:hover, .tab.active {
+    background: #4361ee;
+    color: #fff;
+}
+.section {
+    display: none;
+}
+.section.active {
+    display: block;
+}
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+th, td {
+    padding: 14px 12px;
+    text-align: left;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+th {
+    color: rgba(255,255,255,0.5);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+td { font-size: 14px; }
+.badge {
+    display: inline-block;
+    padding: 5px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 500;
+}
+.badge.admin { background: linear-gradient(135deg, #4361ee 0%, #7209b7 100%); }
+.badge.user { background: rgba(255,255,255,0.1); }
+.form-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 20px;
+    background: rgba(0,0,0,0.2);
+    border-radius: 12px;
+    margin-bottom: 20px;
+}
+.form-row .form-group { flex: 1; min-width: 150px; }
+.actions { display: flex; gap: 8px; }
+.checkbox-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-top: 20px;
+}
+.checkbox-group input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+}
+.access-matrix { overflow-x: auto; }
+.access-matrix table { min-width: 600px; }
+.access-cell { text-align: center; }
+.access-btn {
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 11px;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+}
+.access-btn.granted {
+    background: rgba(34, 197, 94, 0.2);
+    color: #86efac;
+}
+.access-btn.not-granted {
+    background: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.3);
+}
+.modal {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.8);
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+.modal.show { display: flex; }
+.modal-content {
+    background: #1a1a2e;
+    border-radius: 16px;
+    padding: 28px;
+    width: 90%;
+    max-width: 480px;
+}
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+}
+.modal-title { font-size: 18px; font-weight: 600; }
+.modal-close {
+    background: none;
+    border: none;
+    color: rgba(255,255,255,0.5);
+    font-size: 24px;
+    cursor: pointer;
+}
+{% endblock %}
+
+{% block body %}
+<div class="header">
+    <div class="header-left">
+        <a href="/" class="back-link">←</a>
+        <h1>Админка</h1>
+    </div>
+    <div class="header-links">
+        <a href="/logout">Выйти</a>
+    </div>
+</div>
+
+<div class="content">
+    <div class="tabs">
+        <button class="tab active" onclick="showSection('users')">Пользователи</button>
+        <button class="tab" onclick="showSection('accounts')">Аккаунты</button>
+        <button class="tab" onclick="showSection('services')">Сервисы</button>
+        <button class="tab" onclick="showSection('access')">Матрица доступа</button>
+    </div>
+
+    <!-- Users Section -->
+    <div class="section active card" id="section-users">
+        <form method="POST" action="/admin/users/create" class="form-row">
+            <div class="form-group">
+                <label>Email</label>
+                <input type="email" name="email" placeholder="user@example.com" required>
+            </div>
+            <div class="form-group">
+                <label>Имя</label>
+                <input type="text" name="name" placeholder="Имя">
+            </div>
+            <div class="form-group">
+                <label>Пароль</label>
+                <input type="password" name="password" placeholder="Пароль" required>
+            </div>
+            <div class="form-group">
+                <label>Finance аккаунт</label>
+                <select name="finance_account_id">
+                    <option value="">— Не назначен —</option>
+                    {% for acc in accounts %}
+                    <option value="{{ acc.id }}">{{ acc.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="checkbox-group">
+                <input type="checkbox" name="is_admin" id="is_admin" value="true">
+                <label for="is_admin" style="margin:0;font-size:13px;">Админ</label>
+            </div>
+            <div style="display:flex;align-items:flex-end;">
+                <button type="submit" class="btn">Создать</button>
+            </div>
+        </form>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Email</th>
+                    <th>Имя</th>
+                    <th>Finance аккаунт</th>
+                    <th>Роль</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for u in users %}
+                <tr>
+                    <td>{{ u.id }}</td>
+                    <td>{{ u.email }}</td>
+                    <td>{{ u.name or '—' }}</td>
+                    <td>
+                        {% for acc in accounts %}
+                            {% if acc.id == u.finance_account_id %}{{ acc.name }}{% endif %}
+                        {% endfor %}
+                        {% if not u.finance_account_id %}—{% endif %}
+                    </td>
+                    <td>
+                        <span class="badge {% if u.is_admin %}admin{% else %}user{% endif %}">
+                            {{ 'Админ' if u.is_admin else 'Пользователь' }}
+                        </span>
+                    </td>
+                    <td class="actions">
+                        <form method="POST" action="/admin/users/{{ u.id }}/reset-password" style="display:inline;">
+                            <button type="submit" class="btn small secondary" onclick="return confirm('Сбросить пароль?')">Сброс</button>
+                        </form>
+                        {% if u.id != user.id %}
+                        <form method="POST" action="/admin/users/{{ u.id }}/delete" style="display:inline;">
+                            <button type="submit" class="btn small danger" onclick="return confirm('Удалить?')">Удалить</button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Accounts Section -->
+    <div class="section card" id="section-accounts">
+        <form method="POST" action="/admin/accounts/create" class="form-row">
+            <div class="form-group">
+                <label>Название аккаунта</label>
+                <input type="text" name="name" placeholder="Семья Ивановых" required>
+            </div>
+            <div style="display:flex;align-items:flex-end;">
+                <button type="submit" class="btn">Создать</button>
+            </div>
+        </form>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Название</th>
+                    <th>Webhook Token</th>
+                    <th>Создан</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for acc in accounts %}
+                <tr>
+                    <td>{{ acc.id }}</td>
+                    <td>{{ acc.name }}</td>
+                    <td style="font-family:monospace;font-size:11px;color:rgba(255,255,255,0.5);max-width:200px;overflow:hidden;text-overflow:ellipsis;">
+                        {{ acc.webhook_token[:25] }}...
+                    </td>
+                    <td>{{ acc.created_at.strftime('%d.%m.%Y') }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Services Section -->
+    <div class="section card" id="section-services">
+        <form method="POST" action="/admin/services/create" class="form-row">
+            <div class="form-group">
+                <label>Название</label>
+                <input type="text" name="name" placeholder="New Service" required>
+            </div>
+            <div class="form-group">
+                <label>Slug</label>
+                <input type="text" name="slug" placeholder="new-service" pattern="[a-z0-9-]+" required>
+            </div>
+            <div class="form-group">
+                <label>Route</label>
+                <input type="text" name="route" placeholder="/new-service" required>
+            </div>
+            <div class="form-group">
+                <label>Иконка</label>
+                <input type="text" name="icon" placeholder="📱">
+            </div>
+            <div class="form-group">
+                <label>Описание</label>
+                <input type="text" name="description" placeholder="Описание">
+            </div>
+            <div style="display:flex;align-items:flex-end;">
+                <button type="submit" class="btn">Создать</button>
+            </div>
+        </form>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Иконка</th>
+                    <th>Название</th>
+                    <th>Slug</th>
+                    <th>Route</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in services %}
+                <tr>
+                    <td style="font-size:24px;">{{ s.icon or '📱' }}</td>
+                    <td>{{ s.name }}</td>
+                    <td><code>{{ s.slug }}</code></td>
+                    <td>{{ s.route }}</td>
+                    <td>
+                        <form method="POST" action="/admin/services/{{ s.id }}/delete" style="display:inline;">
+                            <button type="submit" class="btn small danger" onclick="return confirm('Удалить сервис?')">Удалить</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Access Matrix Section -->
+    <div class="section card" id="section-access">
+        <div class="access-matrix">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Пользователь</th>
+                        {% for s in services %}
+                        <th style="text-align:center;">{{ s.icon or '📱' }} {{ s.name }}</th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for u in users %}
+                    <tr>
+                        <td>
+                            {{ u.email }}
+                            {% if u.is_admin %}<span class="badge admin" style="margin-left:8px;">A</span>{% endif %}
+                        </td>
+                        {% for s in services %}
+                        {% set access_key = u.id|string + '_' + s.id|string %}
+                        {% set has_access = access_key in access_map %}
+                        <td class="access-cell">
+                            {% if has_access %}
+                            <form method="POST" action="/admin/access/revoke" style="display:inline;">
+                                <input type="hidden" name="user_id" value="{{ u.id }}">
+                                <input type="hidden" name="service_id" value="{{ s.id }}">
+                                <button type="submit" class="access-btn granted">✓ {{ access_map[access_key].role }}</button>
+                            </form>
+                            {% else %}
+                            <button class="access-btn not-granted" onclick="showGrantModal({{ u.id }}, '{{ u.email }}', {{ s.id }}, '{{ s.name }}')">
+                                + Дать
+                            </button>
+                            {% endif %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Grant Access Modal -->
+<div class="modal" id="grant-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 class="modal-title">Дать доступ</h3>
+            <button class="modal-close" onclick="hideGrantModal()">&times;</button>
+        </div>
+        <form method="POST" action="/admin/access/grant">
+            <input type="hidden" name="user_id" id="modal-user-id">
+            <input type="hidden" name="service_id" id="modal-service-id">
+            <p style="margin-bottom:20px;color:rgba(255,255,255,0.7);">
+                Пользователь: <strong id="modal-user-email"></strong><br>
+                Сервис: <strong id="modal-service-name"></strong>
+            </p>
+            <div class="form-group" style="margin-bottom:24px;">
+                <label>Роль</label>
+                <select name="role">
+                    <option value="user">Пользователь</option>
+                    <option value="admin">Админ</option>
+                </select>
+            </div>
+            <button type="submit" class="btn" style="width:100%;">Дать доступ</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function showSection(name) {
+    document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('section-' + name).classList.add('active');
+    event.target.classList.add('active');
+}
+
+function showGrantModal(userId, userEmail, serviceId, serviceName) {
+    document.getElementById('modal-user-id').value = userId;
+    document.getElementById('modal-service-id').value = serviceId;
+    document.getElementById('modal-user-email').textContent = userEmail;
+    document.getElementById('modal-service-name').textContent = serviceName;
+    document.getElementById('grant-modal').classList.add('show');
+}
+
+function hideGrantModal() {
+    document.getElementById('grant-modal').classList.remove('show');
+}
+
+document.getElementById('grant-modal').addEventListener('click', function(e) {
+    if (e.target === this) hideGrantModal();
+});
+</script>
+{% endblock %}

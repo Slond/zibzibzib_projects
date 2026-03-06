@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Вход{% endblock %}
+
+{% block extra_styles %}
+body {
+    background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+.login-container {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 24px;
+    padding: 48px 40px;
+    width: 100%;
+    max-width: 420px;
+    box-shadow: 0 25px 80px rgba(0, 0, 0, 0.5);
+}
+.logo {
+    text-align: center;
+    margin-bottom: 40px;
+}
+.logo-icon {
+    width: 64px;
+    height: 64px;
+    background: linear-gradient(135deg, #4361ee 0%, #7209b7 100%);
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 16px;
+    font-size: 28px;
+}
+.logo h1 {
+    font-size: 28px;
+    color: #fff;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+.logo p {
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 14px;
+}
+{% endblock %}
+
+{% block body %}
+<div class="login-container">
+    <div class="logo">
+        <div class="logo-icon">🏠</div>
+        <h1>Main Project</h1>
+        <p>Единый вход в сервисы</p>
+    </div>
+
+    {% if error %}
+    <div class="error">{{ error }}</div>
+    {% endif %}
+
+    <form method="POST" action="/login">
+        <div class="form-group">
+            <label for="email">Email</label>
+            <input type="email" id="email" name="email" placeholder="your@email.com" required autocomplete="email">
+        </div>
+        <div class="form-group">
+            <label for="password">Пароль</label>
+            <input type="password" id="password" name="password" placeholder="••••••••" required autocomplete="current-password">
+        </div>
+        <button type="submit" class="btn" style="width:100%;">Войти</button>
+    </form>
+</div>
+{% endblock %}

@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Редактировать' if transaction else 'Добавить' }} - Финансы{% endblock %}
+
+{% block extra_styles %}
+.amount-input-container {
+    margin-bottom: 32px;
+}
+.amount-input {
+    width: 100%;
+    text-align: center;
+    font-size: 48px;
+    font-weight: 700;
+    background: transparent;
+    border: none;
+    color: #fff;
+    padding: 20px 0;
+}
+.amount-input:focus {
+    outline: none;
+}
+.amount-input::placeholder {
+    color: rgba(255,255,255,0.2);
+}
+.type-toggle {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 24px;
+}
+.type-btn {
+    flex: 1;
+    padding: 14px;
+    border: 2px solid rgba(255,255,255,0.1);
+    border-radius: 12px;
+    background: transparent;
+    color: rgba(255,255,255,0.5);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.type-btn.active {
+    color: #fff;
+}
+.type-btn.expense.active {
+    border-color: #f87171;
+    background: rgba(248, 113, 113, 0.1);
+}
+.type-btn.income.active {
+    border-color: #4ade80;
+    background: rgba(74, 222, 128, 0.1);
+}
+.categories-scroll {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 4px 0 16px;
+    margin: -4px 0;
+}
+.categories-scroll::-webkit-scrollbar {
+    display: none;
+}
+.category-chip-btn {
+    flex-shrink: 0;
+    padding: 10px 16px;
+    border-radius: 20px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: rgba(255,255,255,0.7);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.category-chip-btn:hover,
+.category-chip-btn.selected {
+    background: linear-gradient(135deg, #4361ee 0%, #7209b7 100%);
+    border-color: transparent;
+    color: #fff;
+}
+.actions-bottom {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 16px 20px;
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+    background: #0f0f1a;
+    display: flex;
+    gap: 12px;
+}
+.actions-bottom .btn { flex: 1; }
+{% endblock %}
+
+{% block body %}
+<div class="header">
+    <div class="header-left">
+        <a href="/finance" class="back-link">←</a>
+        <h1>{{ 'Редактировать' if transaction else 'Добавить' }}</h1>
+    </div>
+    {% if transaction %}
+    <div class="header-links">
+        <form method="POST" action="/finance/transactions/{{ transaction.id }}/delete" style="display:inline;">
+            <button type="submit" style="background:none;border:none;color:#f87171;font-size:14px;cursor:pointer;" onclick="return confirm('Удалить операцию?')">Удалить</button>
+        </form>
+    </div>
+    {% endif %}
+</div>
+
+<div class="content" style="padding-bottom:120px;">
+    <form method="POST" action="/finance/add" id="add-form">
+        {% if transaction %}
+        <input type="hidden" name="transaction_id" value="{{ transaction.id }}">
+        {% endif %}
+
+        <div class="type-toggle">
+            <button type="button" class="type-btn expense active" onclick="setType('expense')">Расход</button>
+            <button type="button" class="type-btn income" onclick="setType('income')">Доход</button>
+        </div>
+
+        <div class="amount-input-container">
+            <input type="text" 
+                   name="amount" 
+                   class="amount-input" 
+                   placeholder="0" 
+                   inputmode="decimal"
+                   id="amount-input"
+                   value="{{ transaction.amount|abs if transaction else '' }}"
+                   required>
+        </div>
+
+        <div class="form-group">
+            <label>Категория</label>
+            <div class="categories-scroll">
+                {% for cat in categories %}
+                <button type="button" 
+                        class="category-chip-btn {% if transaction and transaction.category == cat.name %}selected{% endif %}"
+                        onclick="selectCategory(this, '{{ cat.name }}')">
+                    {{ cat.icon or '' }} {{ cat.name }}
+                </button>
+                {% endfor %}
+            </div>
+            <input type="text" 
+                   name="category" 
+                   id="category-input"
+                   placeholder="Или введите новую" 
+                   value="{{ transaction.category or '' }}">
+        </div>
+
+        <div class="form-group">
+            <label>Магазин / Получатель</label>
+            <input type="text" name="merchant" placeholder="Где покупка" value="{{ transaction.merchant or '' }}">
+        </div>
+
+        <div class="form-group">
+            <label>Описание</label>
+            <input type="text" name="description" placeholder="Комментарий (опционально)" value="{{ transaction.description or '' }}">
+        </div>
+
+        <input type="hidden" name="is_expense" id="is-expense-input" value="1">
+    </form>
+</div>
+
+<div class="actions-bottom">
+    <a href="/finance" class="btn secondary" style="text-align:center;">Отмена</a>
+    <button type="submit" form="add-form" class="btn">{{ 'Сохранить' if transaction else 'Добавить' }}</button>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let isExpense = true;
+
+{% if transaction and transaction.amount > 0 %}
+isExpense = false;
+document.querySelector('.type-btn.expense').classList.remove('active');
+document.querySelector('.type-btn.income').classList.add('active');
+{% endif %}
+
+function setType(type) {
+    isExpense = (type === 'expense');
+    document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector(`.type-btn.${type}`).classList.add('active');
+    document.getElementById('is-expense-input').value = isExpense ? '1' : '0';
+}
+
+function selectCategory(btn, name) {
+    document.querySelectorAll('.category-chip-btn').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    document.getElementById('category-input').value = name;
+}
+
+document.getElementById('add-form').addEventListener('submit', function(e) {
+    const amountInput = document.getElementById('amount-input');
+    let val = amountInput.value.replace(/[^\d.,]/g, '').replace(',', '.');
+    if (!val) {
+        e.preventDefault();
+        return;
+    }
+    let amount = parseFloat(val);
+    if (isExpense && amount > 0) amount = -amount;
+    if (!isExpense && amount < 0) amount = -amount;
+    amountInput.value = amount.toString();
+});
+
+document.getElementById('amount-input').addEventListener('focus', function() {
+    this.select();
+});
+</script>
+{% endblock %}

@@ -1,0 +1,247 @@
+{% extends "base.html" %}
+{% block title %}Датчики{% endblock %}
+
+{% block extra_styles %}
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 16px;
+    margin-bottom: 28px;
+}
+.stat-card {
+    background: rgba(255,255,255,0.05);
+    border-radius: 16px;
+    padding: 20px;
+    text-align: center;
+}
+.stat-icon {
+    font-size: 32px;
+    margin-bottom: 8px;
+}
+.stat-value {
+    font-size: 32px;
+    font-weight: 700;
+}
+.stat-label {
+    font-size: 12px;
+    color: rgba(255,255,255,0.5);
+    margin-top: 4px;
+}
+.stat-time {
+    font-size: 10px;
+    color: rgba(255,255,255,0.3);
+    margin-top: 8px;
+}
+.section-title {
+    font-size: 14px;
+    color: rgba(255,255,255,0.5);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin: 24px 0 16px;
+}
+.devices-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.device-item {
+    background: rgba(255,255,255,0.05);
+    border-radius: 12px;
+    padding: 16px;
+}
+.device-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+.device-name {
+    font-weight: 500;
+}
+.device-room {
+    font-size: 12px;
+    color: rgba(255,255,255,0.4);
+}
+.device-props {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+.prop-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 14px;
+}
+.prop-icon {
+    font-size: 18px;
+}
+.prop-value {
+    font-weight: 600;
+}
+.prop-unit {
+    color: rgba(255,255,255,0.4);
+    font-size: 12px;
+}
+.empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: rgba(255,255,255,0.4);
+}
+.loading {
+    text-align: center;
+    padding: 40px;
+    color: rgba(255,255,255,0.5);
+}
+{% endblock %}
+
+{% block body %}
+<div class="header">
+    <div class="header-left">
+        <a href="/" class="back-link">←</a>
+        <h1>🌡️ Датчики</h1>
+    </div>
+    <div class="header-links">
+        <button onclick="loadData()" style="background:none;border:none;color:rgba(255,255,255,0.7);font-size:18px;cursor:pointer;">🔄</button>
+    </div>
+</div>
+
+<div class="content">
+    <div class="stats-grid" id="main-stats">
+        <div class="loading">Загрузка...</div>
+    </div>
+
+    <div class="section-title">Все устройства</div>
+    <div class="devices-list" id="devices-list">
+        <div class="loading">Загрузка...</div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const propIcons = {
+    temperature: '🌡️',
+    humidity: '💧',
+    co2_level: '💨',
+    battery_level: '🔋',
+    pressure: '🌪️',
+    illumination: '💡',
+    pm2_5_density: '🌫️'
+};
+
+const propNames = {
+    temperature: 'Температура',
+    humidity: 'Влажность',
+    co2_level: 'CO₂',
+    battery_level: 'Батарея',
+    pressure: 'Давление',
+    illumination: 'Освещенность',
+    pm2_5_density: 'PM2.5'
+};
+
+async function loadData() {
+    try {
+        const [devicesRes, latestRes] = await Promise.all([
+            fetch('/weather/api/devices'),
+            fetch('/weather/api/latest')
+        ]);
+        
+        const devices = await devicesRes.json();
+        const latest = await latestRes.json();
+        
+        const byDevice = {};
+        latest.forEach(m => {
+            if (!byDevice[m.device_id]) {
+                byDevice[m.device_id] = { name: m.device_name, props: [] };
+            }
+            byDevice[m.device_id].props.push(m);
+        });
+        
+        const mainStats = [];
+        latest.forEach(m => {
+            if (['temperature', 'humidity', 'co2_level'].includes(m.property)) {
+                mainStats.push(m);
+            }
+        });
+        
+        renderMainStats(mainStats);
+        renderDevices(devices, byDevice);
+        
+    } catch (e) {
+        console.error('Failed to load:', e);
+        document.getElementById('main-stats').innerHTML = '<div class="empty-state">Ошибка загрузки данных</div>';
+        document.getElementById('devices-list').innerHTML = '';
+    }
+}
+
+function renderMainStats(stats) {
+    const container = document.getElementById('main-stats');
+    if (stats.length === 0) {
+        container.innerHTML = '<div class="empty-state">Нет данных</div>';
+        return;
+    }
+    
+    container.innerHTML = stats.map(m => `
+        <div class="stat-card">
+            <div class="stat-icon">${propIcons[m.property] || '📊'}</div>
+            <div class="stat-value">${formatValue(m.value, m.property)}</div>
+            <div class="stat-label">${m.device_name}</div>
+            <div class="stat-time">${formatTime(m.timestamp)}</div>
+        </div>
+    `).join('');
+}
+
+function renderDevices(devices, byDevice) {
+    const container = document.getElementById('devices-list');
+    if (devices.length === 0) {
+        container.innerHTML = '<div class="empty-state">Нет устройств<br><small>Настройте Yandex Token</small></div>';
+        return;
+    }
+    
+    container.innerHTML = devices.map(d => {
+        const data = byDevice[d.device_id] || { props: [] };
+        return `
+            <div class="device-item">
+                <div class="device-header">
+                    <span class="device-name">${d.name}</span>
+                    <span class="device-room">${d.room || ''}</span>
+                </div>
+                <div class="device-props">
+                    ${data.props.map(p => `
+                        <div class="prop-item">
+                            <span class="prop-icon">${propIcons[p.property] || '📊'}</span>
+                            <span class="prop-value">${formatValue(p.value, p.property)}</span>
+                            <span class="prop-unit">${p.unit || ''}</span>
+                        </div>
+                    `).join('')}
+                    ${data.props.length === 0 ? '<span style="color:rgba(255,255,255,0.3);font-size:12px;">Нет данных</span>' : ''}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function formatValue(val, prop) {
+    if (prop === 'temperature') return val.toFixed(1) + '°';
+    if (prop === 'humidity' || prop === 'battery_level') return Math.round(val) + '%';
+    if (prop === 'co2_level') return Math.round(val);
+    return val.toFixed(1);
+}
+
+function formatTime(iso) {
+    const d = new Date(iso);
+    const now = new Date();
+    const diffMs = now - d;
+    const diffMin = Math.round(diffMs / 60000);
+    
+    if (diffMin < 1) return 'только что';
+    if (diffMin < 60) return `${diffMin} мин назад`;
+    if (diffMin < 1440) return `${Math.round(diffMin/60)} ч назад`;
+    return d.toLocaleDateString('ru-RU');
+}
+
+loadData();
+setInterval(loadData, 60000);
+</script>
+{% endblock %}

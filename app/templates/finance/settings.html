@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}Настройки - Финансы{% endblock %}
+
+{% block body %}
+<div class="header">
+    <div class="header-left">
+        <a href="/finance" class="back-link">←</a>
+        <h1>⚙️ Настройки</h1>
+    </div>
+</div>
+
+<div class="content" style="padding-bottom:100px;">
+    <div class="card">
+        <h3 style="margin-bottom:16px;font-size:16px;">iOS Shortcut</h3>
+        <p style="color:rgba(255,255,255,0.5);font-size:13px;margin-bottom:20px;line-height:1.6;">
+            Используйте этот URL в iOS Shortcuts для автоматического создания транзакций при уведомлениях от банка.
+        </p>
+        
+        {% if account %}
+        <div class="form-group">
+            <label>Webhook URL</label>
+            <div style="display:flex;gap:8px;">
+                <input type="text" 
+                       id="webhook-url" 
+                       value="{{ request.url.scheme }}://{{ request.url.netloc }}/finance/api/webhook/{{ account.webhook_token }}" 
+                       readonly
+                       style="font-size:12px;font-family:monospace;">
+                <button type="button" class="btn small" onclick="copyUrl()">📋</button>
+            </div>
+        </div>
+        
+        <form method="POST" action="/finance/settings/regenerate-token" style="margin-top:16px;">
+            <button type="submit" class="btn small danger" onclick="return confirm('Это сделает старый URL недействительным. Продолжить?')">
+                🔄 Перегенерировать токен
+            </button>
+        </form>
+        {% else %}
+        <p style="color:#f87171;">Аккаунт не назначен. Обратитесь к администратору.</p>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <h3 style="margin-bottom:16px;font-size:16px;">Инструкция iOS Shortcuts</h3>
+        <ol style="color:rgba(255,255,255,0.7);font-size:13px;line-height:1.8;padding-left:20px;">
+            <li>Откройте приложение <strong>Shortcuts</strong></li>
+            <li>Создайте новый Shortcut (+)</li>
+            <li>Добавьте действие <strong>"Get Contents of URL"</strong>:
+                <ul style="margin:8px 0;padding-left:16px;">
+                    <li>URL: скопируйте Webhook URL выше</li>
+                    <li>Method: <strong>POST</strong></li>
+                </ul>
+            </li>
+            <li>Добавьте действие <strong>"Open URL"</strong>:
+                <ul style="margin:8px 0;padding-left:16px;">
+                    <li>URL: {{ request.url.scheme }}://{{ request.url.netloc }}/finance/add</li>
+                </ul>
+            </li>
+            <li>Сохраните Shortcut</li>
+            <li>Перейдите в <strong>Automation</strong> → <strong>+</strong></li>
+            <li>Выберите <strong>"When I get a notification from [Банк]"</strong></li>
+            <li>Действие: <strong>Run Shortcut</strong> → выберите созданный</li>
+            <li>Отключите <strong>"Ask Before Running"</strong></li>
+        </ol>
+    </div>
+
+    <div class="card">
+        <h3 style="margin-bottom:16px;font-size:16px;">Аккаунт</h3>
+        <p style="color:rgba(255,255,255,0.5);font-size:13px;">
+            <strong>{{ user.email }}</strong><br>
+            {% if account %}
+            Аккаунт: {{ account.name }}
+            {% endif %}
+        </p>
+        <div style="margin-top:20px;display:flex;gap:12px;">
+            <a href="/change-password" class="btn small secondary">Сменить пароль</a>
+            <a href="/logout" class="btn small danger">Выйти</a>
+        </div>
+    </div>
+</div>
+
+<nav class="nav-bottom">
+    <a href="/finance" class="nav-item">
+        <span class="nav-icon">📊</span>
+        Обзор
+    </a>
+    <a href="/finance/add" class="nav-item">
+        <span class="nav-icon">➕</span>
+        Добавить
+    </a>
+    <a href="/finance/history" class="nav-item">
+        <span class="nav-icon">📋</span>
+        История
+    </a>
+    <a href="/finance/settings" class="nav-item active">
+        <span class="nav-icon">⚙️</span>
+        Настройки
+    </a>
+</nav>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function copyUrl() {
+    const input = document.getElementById('webhook-url');
+    input.select();
+    navigator.clipboard.writeText(input.value);
+    alert('URL скопирован!');
+}
+</script>
+{% endblock %}
