@@ -173,6 +173,21 @@ class Measurement(Base):
     )
 
 
+class WeatherDisplaySetting(Base):
+    """Settings for which device properties to display on weather dashboard"""
+    __tablename__ = "weather_display_settings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    device_id = Column(String, nullable=False, index=True)
+    property_instance = Column(String, nullable=False)
+    show_on_dashboard = Column(Boolean, default=False)
+    display_order = Column(Integer, default=0)
+
+    __table_args__ = (
+        Index("idx_weather_display_device_prop", "device_id", "property_instance", unique=True),
+    )
+
+
 # ============================================
 # Database initialization
 # ============================================

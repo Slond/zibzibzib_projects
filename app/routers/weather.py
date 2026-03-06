@@ -3,12 +3,13 @@ import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Request, Query, HTTPException
+from fastapi import APIRouter, Request, Query, HTTPException, Form
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select, func
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from app.database import async_session, Device, Measurement
+from app.database import async_session, Device, Measurement, WeatherDisplaySetting
 from app.auth import get_current_user, has_service_access
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,95 @@ async def weather_index(request: Request):
         "weather/index.html",
         {"request": request, "user": user}
     )
+
+
+@router.get("/settings")
+async def weather_settings(request: Request):
+    """Weather display settings page"""
+    user = await require_weather_access(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    if not user.is_admin:
+        return RedirectResponse(url="/weather", status_code=302)
+
+    async with async_session() as session:
+        devices_result = await session.execute(select(Device).order_by(Device.name))
+        devices = devices_result.scalars().all()
+
+        props_result = await session.execute(
+            select(
+                Measurement.device_id,
+                Measurement.property_instance,
+                Measurement.unit,
+            )
+            .distinct()
+            .order_by(Measurement.device_id, Measurement.property_instance)
+        )
+        properties = props_result.all()
+
+        settings_result = await session.execute(select(WeatherDisplaySetting))
+        settings = {
+            f"{s.device_id}|{s.property_instance}": s
+            for s in settings_result.scalars().all()
+        }
+
+    devices_map = {d.device_id: d for d in devices}
+
+    grouped = {}
+    for prop in properties:
+        device = devices_map.get(prop.device_id)
+        if not device:
+            continue
+        if device.device_id not in grouped:
+            grouped[device.device_id] = {
+                "device": device,
+                "properties": []
+            }
+        key = f"{prop.device_id}|{prop.property_instance}"
+        setting = settings.get(key)
+        grouped[device.device_id]["properties"].append({
+            "property": prop.property_instance,
+            "unit": prop.unit,
+            "show_on_dashboard": setting.show_on_dashboard if setting else False,
+            "display_order": setting.display_order if setting else 0,
+        })
+
+    return templates.TemplateResponse(
+        "weather/settings.html",
+        {
+            "request": request,
+            "user": user,
+            "devices_grouped": grouped,
+        }
+    )
+
+
+@router.post("/settings/toggle")
+async def toggle_display(
+    request: Request,
+    device_id: str = Form(...),
+    property_instance: str = Form(...),
+    show: bool = Form(False),
+):
+    """Toggle whether a property is shown on dashboard"""
+    user = await require_weather_access(request)
+    if not user or not user.is_admin:
+        raise HTTPException(status_code=403)
+
+    async with async_session() as session:
+        stmt = sqlite_insert(WeatherDisplaySetting).values(
+            device_id=device_id,
+            property_instance=property_instance,
+            show_on_dashboard=show,
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["device_id", "property_instance"],
+            set_={"show_on_dashboard": show},
+        )
+        await session.execute(stmt)
+        await session.commit()
+
+    return {"status": "ok"}
 
 
 # ============ API Endpoints ============
@@ -121,7 +211,7 @@ async def get_measurements(
 
         return [
             {
-                "timestamp": m.timestamp.isoformat(),
+                "timestamp": m.timestamp.isoformat() + "Z",
                 "value": m.value,
                 "unit": m.unit,
             }
@@ -130,7 +220,8 @@ async def get_measurements(
 
 
 @router.get("/api/latest")
-async def get_latest_measurements(request: Request):
+async def get_latest_measurements(request: Request, visible_only: bool = Query(False)):
+    """Get latest measurements. If visible_only=True, only return those marked for dashboard."""
     user = await require_weather_access(request)
     if not user:
         raise HTTPException(status_code=401)
@@ -160,6 +251,24 @@ async def get_latest_measurements(request: Request):
         devices_result = await session.execute(select(Device))
         devices = {d.device_id: d.name for d in devices_result.scalars().all()}
 
+        if visible_only:
+            settings_result = await session.execute(
+                select(WeatherDisplaySetting).where(WeatherDisplaySetting.show_on_dashboard == True)
+            )
+            visible = {
+                f"{s.device_id}|{s.property_instance}": s.display_order
+                for s in settings_result.scalars().all()
+            }
+
+            filtered = []
+            for m in measurements:
+                key = f"{m.device_id}|{m.property_instance}"
+                if key in visible:
+                    filtered.append((m, visible[key]))
+
+            filtered.sort(key=lambda x: x[1])
+            measurements = [m for m, _ in filtered]
+
         return [
             {
                 "device_id": m.device_id,
@@ -167,7 +276,7 @@ async def get_latest_measurements(request: Request):
                 "property": m.property_instance,
                 "value": m.value,
                 "unit": m.unit,
-                "timestamp": m.timestamp.isoformat(),
+                "timestamp": m.timestamp.isoformat() + "Z",
             }
             for m in measurements
         ]

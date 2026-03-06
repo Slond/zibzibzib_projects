@@ -4,94 +4,116 @@
 {% block extra_styles %}
 .stats-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
     gap: 16px;
-    margin-bottom: 28px;
+    margin-bottom: 32px;
 }
 .stat-card {
     background: rgba(255,255,255,0.05);
     border-radius: 16px;
     padding: 20px;
     text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: 2px solid transparent;
+}
+.stat-card:hover {
+    background: rgba(255,255,255,0.08);
+}
+.stat-card.selected {
+    border-color: #4361ee;
+    background: rgba(67, 97, 238, 0.1);
 }
 .stat-icon {
-    font-size: 32px;
+    font-size: 28px;
     margin-bottom: 8px;
 }
 .stat-value {
-    font-size: 32px;
+    font-size: 28px;
     font-weight: 700;
 }
+.stat-value.temperature { color: #ff6b6b; }
+.stat-value.humidity { color: #4ecdc4; }
+.stat-value.pm25 { color: #ffe66d; }
+.stat-value.co2 { color: #95e1d3; }
 .stat-label {
-    font-size: 12px;
+    font-size: 11px;
     color: rgba(255,255,255,0.5);
     margin-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
-.stat-time {
+.stat-device {
     font-size: 10px;
     color: rgba(255,255,255,0.3);
     margin-top: 8px;
 }
-.section-title {
-    font-size: 14px;
-    color: rgba(255,255,255,0.5);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    margin: 24px 0 16px;
-}
-.devices-list {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-.device-item {
+.chart-section {
     background: rgba(255,255,255,0.05);
-    border-radius: 12px;
-    padding: 16px;
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 20px;
 }
-.device-header {
+.chart-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 12px;
-}
-.device-name {
-    font-weight: 500;
-}
-.device-room {
-    font-size: 12px;
-    color: rgba(255,255,255,0.4);
-}
-.device-props {
-    display: flex;
-    gap: 16px;
+    margin-bottom: 16px;
     flex-wrap: wrap;
+    gap: 12px;
 }
-.prop-item {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 14px;
-}
-.prop-icon {
-    font-size: 18px;
-}
-.prop-value {
+.chart-title {
+    font-size: 16px;
     font-weight: 600;
 }
-.prop-unit {
-    color: rgba(255,255,255,0.4);
+.chart-controls {
+    display: flex;
+    gap: 8px;
+}
+.chart-controls select {
+    background: rgba(255,255,255,0.1);
+    border: 1px solid rgba(255,255,255,0.2);
+    color: #fff;
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+}
+.chart-controls select:focus {
+    outline: none;
+    border-color: #4361ee;
+}
+.chart-container {
+    height: 300px;
+    position: relative;
+}
+.chart-placeholder {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: rgba(255,255,255,0.3);
+    text-align: center;
+}
+.last-update {
+    text-align: center;
+    color: rgba(255,255,255,0.3);
     font-size: 12px;
+    margin-top: 20px;
 }
 .empty-state {
     text-align: center;
     padding: 60px 20px;
     color: rgba(255,255,255,0.4);
 }
-.loading {
-    text-align: center;
-    padding: 40px;
-    color: rgba(255,255,255,0.5);
+.timezone-select {
+    background: rgba(255,255,255,0.1);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 6px;
+    color: #aaa;
+    padding: 6px 10px;
+    font-size: 12px;
+    cursor: pointer;
 }
 {% endblock %}
 
@@ -102,145 +124,320 @@
         <h1>🌡️ Датчики</h1>
     </div>
     <div class="header-links">
-        <button onclick="loadData()" style="background:none;border:none;color:rgba(255,255,255,0.7);font-size:18px;cursor:pointer;">🔄</button>
+        <select id="timezone-select" class="timezone-select"></select>
+        {% if user.is_admin %}
+        <a href="/weather/settings">⚙️</a>
+        {% endif %}
     </div>
 </div>
 
 <div class="content">
-    <div class="stats-grid" id="main-stats">
-        <div class="loading">Загрузка...</div>
+    <div class="stats-grid" id="stats-container">
+        <div class="empty-state">Загрузка...</div>
     </div>
 
-    <div class="section-title">Все устройства</div>
-    <div class="devices-list" id="devices-list">
-        <div class="loading">Загрузка...</div>
+    <div class="chart-section">
+        <div class="chart-header">
+            <span class="chart-title">📈 История измерений</span>
+            <div class="chart-controls">
+                <select id="hours-select">
+                    <option value="6">6 часов</option>
+                    <option value="12">12 часов</option>
+                    <option value="24" selected>24 часа</option>
+                    <option value="48">48 часов</option>
+                    <option value="168">Неделя</option>
+                </select>
+            </div>
+        </div>
+        <div class="chart-container">
+            <canvas id="main-chart"></canvas>
+            <div class="chart-placeholder" id="chart-placeholder">
+                Выберите параметр на карточке выше
+            </div>
+        </div>
     </div>
+
+    <div class="last-update" id="last-update"></div>
 </div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
-const propIcons = {
-    temperature: '🌡️',
-    humidity: '💧',
-    co2_level: '💨',
-    battery_level: '🔋',
-    pressure: '🌪️',
-    illumination: '💡',
-    pm2_5_density: '🌫️'
+const PROPERTY_ICONS = {
+    'temperature': '🌡️',
+    'humidity': '💧',
+    'pm2.5_density': '🌫️',
+    'pm10_density': '🌫️',
+    'co2_level': '💨',
+    'tvoc': '🧪',
+    'illumination': '💡',
+    'battery_level': '🔋',
+    'pressure': '🌪️',
 };
 
-const propNames = {
-    temperature: 'Температура',
-    humidity: 'Влажность',
-    co2_level: 'CO₂',
-    battery_level: 'Батарея',
-    pressure: 'Давление',
-    illumination: 'Освещенность',
-    pm2_5_density: 'PM2.5'
+const PROPERTY_LABELS = {
+    'temperature': 'Температура',
+    'humidity': 'Влажность',
+    'pm2.5_density': 'PM2.5',
+    'pm10_density': 'PM10',
+    'co2_level': 'CO₂',
+    'tvoc': 'TVOC',
+    'illumination': 'Освещение',
+    'battery_level': 'Батарея',
+    'pressure': 'Давление',
 };
 
-async function loadData() {
-    try {
-        const [devicesRes, latestRes] = await Promise.all([
-            fetch('/weather/api/devices'),
-            fetch('/weather/api/latest')
-        ]);
-        
-        const devices = await devicesRes.json();
-        const latest = await latestRes.json();
-        
-        const byDevice = {};
-        latest.forEach(m => {
-            if (!byDevice[m.device_id]) {
-                byDevice[m.device_id] = { name: m.device_name, props: [] };
-            }
-            byDevice[m.device_id].props.push(m);
-        });
-        
-        const mainStats = [];
-        latest.forEach(m => {
-            if (['temperature', 'humidity', 'co2_level'].includes(m.property)) {
-                mainStats.push(m);
-            }
-        });
-        
-        renderMainStats(mainStats);
-        renderDevices(devices, byDevice);
-        
-    } catch (e) {
-        console.error('Failed to load:', e);
-        document.getElementById('main-stats').innerHTML = '<div class="empty-state">Ошибка загрузки данных</div>';
-        document.getElementById('devices-list').innerHTML = '';
-    }
+const PROPERTY_COLORS = {
+    'temperature': '#ff6b6b',
+    'humidity': '#4ecdc4',
+    'pm2.5_density': '#ffe66d',
+    'pm10_density': '#ffa502',
+    'co2_level': '#95e1d3',
+    'tvoc': '#a29bfe',
+    'illumination': '#fdcb6e',
+    'battery_level': '#74b9ff',
+    'pressure': '#fd79a8',
+};
+
+let chart = null;
+let latestData = [];
+let selectedCard = null;
+
+function getTimezoneOffset() {
+    return parseInt(localStorage.getItem('tz_offset') || '5');
+}
+function setTimezoneOffset(offset) {
+    localStorage.setItem('tz_offset', offset.toString());
 }
 
-function renderMainStats(stats) {
-    const container = document.getElementById('main-stats');
-    if (stats.length === 0) {
-        container.innerHTML = '<div class="empty-state">Нет данных</div>';
-        return;
-    }
-    
-    container.innerHTML = stats.map(m => `
-        <div class="stat-card">
-            <div class="stat-icon">${propIcons[m.property] || '📊'}</div>
-            <div class="stat-value">${formatValue(m.value, m.property)}</div>
-            <div class="stat-label">${m.device_name}</div>
-            <div class="stat-time">${formatTime(m.timestamp)}</div>
-        </div>
-    `).join('');
-}
-
-function renderDevices(devices, byDevice) {
-    const container = document.getElementById('devices-list');
-    if (devices.length === 0) {
-        container.innerHTML = '<div class="empty-state">Нет устройств<br><small>Настройте Yandex Token</small></div>';
-        return;
-    }
-    
-    container.innerHTML = devices.map(d => {
-        const data = byDevice[d.device_id] || { props: [] };
-        return `
-            <div class="device-item">
-                <div class="device-header">
-                    <span class="device-name">${d.name}</span>
-                    <span class="device-room">${d.room || ''}</span>
-                </div>
-                <div class="device-props">
-                    ${data.props.map(p => `
-                        <div class="prop-item">
-                            <span class="prop-icon">${propIcons[p.property] || '📊'}</span>
-                            <span class="prop-value">${formatValue(p.value, p.property)}</span>
-                            <span class="prop-unit">${p.unit || ''}</span>
-                        </div>
-                    `).join('')}
-                    ${data.props.length === 0 ? '<span style="color:rgba(255,255,255,0.3);font-size:12px;">Нет данных</span>' : ''}
-                </div>
-            </div>
-        `;
-    }).join('');
-}
-
-function formatValue(val, prop) {
-    if (prop === 'temperature') return val.toFixed(1) + '°';
-    if (prop === 'humidity' || prop === 'battery_level') return Math.round(val) + '%';
-    if (prop === 'co2_level') return Math.round(val);
-    return val.toFixed(1);
-}
-
-function formatTime(iso) {
+function applyTz(dateStr) {
+    let iso = dateStr.replace(' ', 'T');
+    if (!iso.endsWith('Z') && !iso.includes('+')) iso += 'Z';
     const d = new Date(iso);
+    return new Date(d.getTime() + getTimezoneOffset() * 3600000);
+}
+
+function formatTime(dateStr) {
+    const d = applyTz(dateStr);
+    const pad = n => n.toString().padStart(2, '0');
+    return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+}
+
+function formatDateTime(dateStr) {
+    const d = applyTz(dateStr);
+    const pad = n => n.toString().padStart(2, '0');
+    return `${pad(d.getUTCDate())}.${pad(d.getUTCMonth()+1)} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+}
+
+function timeAgo(dateStr) {
+    const d = new Date(dateStr.endsWith('Z') ? dateStr : dateStr + 'Z');
     const now = new Date();
-    const diffMs = now - d;
-    const diffMin = Math.round(diffMs / 60000);
-    
+    const diffMin = Math.round((now - d) / 60000);
     if (diffMin < 1) return 'только что';
     if (diffMin < 60) return `${diffMin} мин назад`;
     if (diffMin < 1440) return `${Math.round(diffMin/60)} ч назад`;
-    return d.toLocaleDateString('ru-RU');
+    return `${Math.round(diffMin/1440)} дн назад`;
 }
 
+function formatUnit(unit) {
+    if (!unit) return '';
+    return unit
+        .replace('unit.temperature.celsius', '°C')
+        .replace('unit.percent', '%')
+        .replace('unit.density.mcg_m3', 'мкг/м³')
+        .replace('unit.ppm', 'ppm')
+        .replace('unit.illumination.lux', 'лк')
+        .replace('unit.pressure.mmhg', 'мм');
+}
+
+function getPropertyClass(prop) {
+    if (prop.includes('temperature')) return 'temperature';
+    if (prop.includes('humidity')) return 'humidity';
+    if (prop.includes('pm')) return 'pm25';
+    if (prop.includes('co2')) return 'co2';
+    return '';
+}
+
+function initTimezoneSelect() {
+    const select = document.getElementById('timezone-select');
+    const saved = getTimezoneOffset();
+    for (let i = -12; i <= 12; i++) {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = i === 0 ? 'UTC' : `UTC${i > 0 ? '+' : ''}${i}`;
+        if (i === saved) opt.selected = true;
+        select.appendChild(opt);
+    }
+    select.addEventListener('change', (e) => {
+        setTimezoneOffset(parseInt(e.target.value));
+        renderStats();
+        if (selectedCard) updateChart();
+    });
+}
+
+async function loadData() {
+    try {
+        const resp = await fetch('/weather/api/latest?visible_only=true');
+        if (!resp.ok) throw new Error('Failed');
+        latestData = await resp.json();
+        renderStats();
+    } catch (e) {
+        console.error('Load failed:', e);
+    }
+}
+
+function renderStats() {
+    const container = document.getElementById('stats-container');
+    
+    if (latestData.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state" style="grid-column:1/-1;">
+                <p>Нет данных для отображения</p>
+                <p style="font-size:12px;margin-top:8px;">
+                    {% if user.is_admin %}
+                    <a href="/weather/settings" style="color:#4361ee;">Настройте параметры →</a>
+                    {% else %}
+                    Обратитесь к администратору
+                    {% endif %}
+                </p>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = latestData.map((item, idx) => {
+        const icon = PROPERTY_ICONS[item.property] || '📊';
+        const label = PROPERTY_LABELS[item.property] || item.property;
+        const colorClass = getPropertyClass(item.property);
+        const isSelected = selectedCard === idx;
+        
+        return `
+            <div class="stat-card ${isSelected ? 'selected' : ''}" onclick="selectCard(${idx})">
+                <div class="stat-icon">${icon}</div>
+                <div class="stat-value ${colorClass}">
+                    ${typeof item.value === 'number' ? item.value.toFixed(1) : item.value}
+                    <span style="font-size:14px;color:rgba(255,255,255,0.5);">${formatUnit(item.unit)}</span>
+                </div>
+                <div class="stat-label">${label}</div>
+                <div class="stat-device">${item.device_name}</div>
+            </div>
+        `;
+    }).join('');
+
+    if (latestData.length > 0) {
+        const lastTs = latestData.reduce((max, item) => {
+            const ts = new Date(item.timestamp.endsWith('Z') ? item.timestamp : item.timestamp + 'Z');
+            return ts > max ? ts : max;
+        }, new Date(0));
+        document.getElementById('last-update').textContent = `Обновлено: ${timeAgo(lastTs.toISOString())}`;
+    }
+}
+
+async function selectCard(idx) {
+    selectedCard = idx;
+    renderStats();
+    await updateChart();
+}
+
+async function updateChart() {
+    if (selectedCard === null || !latestData[selectedCard]) {
+        document.getElementById('chart-placeholder').style.display = 'block';
+        return;
+    }
+    
+    document.getElementById('chart-placeholder').style.display = 'none';
+    
+    const item = latestData[selectedCard];
+    const hours = parseInt(document.getElementById('hours-select').value);
+    
+    try {
+        const resp = await fetch(
+            `/weather/api/measurements?device_id=${encodeURIComponent(item.device_id)}&property_instance=${encodeURIComponent(item.property)}&hours=${hours}`
+        );
+        if (!resp.ok) throw new Error('Failed');
+        const measurements = await resp.json();
+        
+        const ctx = document.getElementById('main-chart').getContext('2d');
+        
+        if (chart) {
+            chart.destroy();
+        }
+        
+        const color = PROPERTY_COLORS[item.property] || '#4361ee';
+        const label = PROPERTY_LABELS[item.property] || item.property;
+        
+        const chartData = measurements.map(m => ({
+            x: applyTz(m.timestamp).getTime(),
+            y: m.value,
+        }));
+        
+        chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                datasets: [{
+                    label: label,
+                    data: chartData,
+                    borderColor: color,
+                    backgroundColor: color + '20',
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 1,
+                    pointHoverRadius: 5,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            title: function(context) {
+                                const ms = context[0].parsed.x;
+                                const d = new Date(ms);
+                                const pad = n => n.toString().padStart(2, '0');
+                                return `${pad(d.getUTCDate())}.${pad(d.getUTCMonth()+1)} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+                            },
+                            label: function(context) {
+                                return `${label}: ${context.parsed.y.toFixed(1)} ${formatUnit(item.unit)}`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: { displayFormats: { hour: 'HH:mm', day: 'dd.MM' } },
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        ticks: {
+                            color: 'rgba(255,255,255,0.4)',
+                            callback: function(value) {
+                                const d = new Date(value);
+                                const pad = n => n.toString().padStart(2, '0');
+                                return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+                            }
+                        }
+                    },
+                    y: {
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        ticks: { color: 'rgba(255,255,255,0.4)' }
+                    }
+                }
+            }
+        });
+    } catch (e) {
+        console.error('Chart update failed:', e);
+    }
+}
+
+document.getElementById('hours-select').addEventListener('change', () => {
+    if (selectedCard !== null) updateChart();
+});
+
+initTimezoneSelect();
 loadData();
 setInterval(loadData, 60000);
 </script>
