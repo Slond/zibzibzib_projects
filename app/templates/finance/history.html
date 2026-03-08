@@ -154,6 +154,11 @@
 .date-divider:first-child {
     padding-top: 0;
 }
+.history-container {
+    max-width: 460px;
+    margin: 0 auto;
+    padding: 0 16px;
+}
 {% endblock %}
 
 {% block body %}
@@ -165,6 +170,7 @@
 </div>
 
 <div class="content" style="padding-bottom:80px;">
+<div class="history-container">
     {% if events|length > 1 %}
     <div class="event-filter">
         <a href="/finance/history{% if current_category %}?category={{ current_category }}{% endif %}" 
@@ -233,6 +239,7 @@
         Нет операций{% if current_category %} в категории "{{ current_category }}"{% endif %}
     </div>
     {% endif %}
+</div>
 </div>
 
 <nav class="nav-bottom">

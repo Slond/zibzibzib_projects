@@ -156,6 +156,11 @@
     box-shadow: 0 10px 30px rgba(67, 97, 238, 0.5);
     z-index: 100;
 }
+.index-container {
+    max-width: 460px;
+    margin: 0 auto;
+    padding: 0 16px;
+}
 .empty-state {
     text-align: center;
     padding: 60px 20px;
@@ -175,6 +180,7 @@
 </div>
 
 <div class="content" style="padding-bottom:180px;">
+<div class="index-container">
     {% if budget_alert %}
     <div class="budget-alert">
         <div class="budget-alert-header">⚠️ Бюджет «{{ budget_alert.category }}»</div>
@@ -220,6 +226,7 @@
     <div class="transactions-list" id="transactions-container">
         <div class="empty-state">Загрузка...</div>
     </div>
+</div>
 </div>
 
 <a href="/finance/add{% if events|length == 1 %}?event={{ events[0].id }}{% endif %}" class="fab">+</a>

@@ -1242,19 +1242,32 @@ async def api_analytics_daily(
     request: Request,
     days: int = Query(30, le=365),
     event_id: int = Query(None),
+    date_from: str = Query(None),
+    date_to: str = Query(None),
 ):
     """Get daily aggregated transactions for charts"""
     user = await require_finance_access(request)
     if not user or not user.finance_account_id:
         raise HTTPException(status_code=401)
 
-    since = datetime.now(tz=timezone.utc) - timedelta(days=days)
+    if date_from and date_to:
+        try:
+            since = datetime.strptime(date_from, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            until = datetime.strptime(date_to, "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
+        except ValueError:
+            since = datetime.now(tz=timezone.utc) - timedelta(days=days)
+            until = None
+    else:
+        since = datetime.now(tz=timezone.utc) - timedelta(days=days)
+        until = None
 
     async with async_session() as session:
         base_filter = [
             Transaction.account_id == user.finance_account_id,
             Transaction.timestamp >= since,
         ]
+        if until:
+            base_filter.append(Transaction.timestamp <= until)
         if event_id:
             base_filter.append(Transaction.event_id == event_id)
         
@@ -1289,13 +1302,24 @@ async def api_analytics_by_category(
     request: Request,
     days: int = Query(30, le=365),
     event_id: int = Query(None),
+    date_from: str = Query(None),
+    date_to: str = Query(None),
 ):
     """Get category breakdown for pie chart"""
     user = await require_finance_access(request)
     if not user or not user.finance_account_id:
         raise HTTPException(status_code=401)
 
-    since = datetime.now(tz=timezone.utc) - timedelta(days=days)
+    if date_from and date_to:
+        try:
+            since = datetime.strptime(date_from, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            until = datetime.strptime(date_to, "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
+        except ValueError:
+            since = datetime.now(tz=timezone.utc) - timedelta(days=days)
+            until = None
+    else:
+        since = datetime.now(tz=timezone.utc) - timedelta(days=days)
+        until = None
 
     async with async_session() as session:
         base_filter = [
@@ -1303,6 +1327,8 @@ async def api_analytics_by_category(
             Transaction.timestamp >= since,
             Transaction.amount < 0,  # Only expenses
         ]
+        if until:
+            base_filter.append(Transaction.timestamp <= until)
         if event_id:
             base_filter.append(Transaction.event_id == event_id)
         

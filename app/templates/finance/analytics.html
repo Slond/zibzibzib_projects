@@ -144,6 +144,50 @@
     font-size: 12px;
     color: rgba(255,255,255,0.4);
 }
+.analytics-container {
+    max-width: 460px;
+    margin: 0 auto;
+    padding: 0 16px;
+}
+.date-range-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+.date-input {
+    flex: 1;
+    min-width: 120px;
+    padding: 10px 12px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 12px;
+    color: #fff;
+    font-size: 14px;
+}
+.date-input:focus {
+    outline: none;
+    border-color: #4361ee;
+}
+.apply-btn {
+    padding: 10px 20px;
+    background: linear-gradient(135deg, #4361ee 0%, #7209b7 100%);
+    border: none;
+    border-radius: 12px;
+    color: #fff;
+    font-size: 14px;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+.apply-btn:hover {
+    opacity: 0.9;
+}
+.empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: rgba(255,255,255,0.4);
+}
 {% endblock %}
 
 {% block body %}
@@ -155,6 +199,7 @@
 </div>
 
 <div class="content" style="padding-bottom:100px;">
+<div class="analytics-container">
     <!-- Event Filter -->
     {% if events|length > 1 %}
     <div class="event-filter">
@@ -171,10 +216,19 @@
 
     <!-- Period Selector -->
     <div class="period-selector">
-        <button class="period-btn {% if days == 7 %}active{% endif %}" onclick="setPeriod(7)">7 дней</button>
-        <button class="period-btn {% if days == 30 %}active{% endif %}" onclick="setPeriod(30)">Месяц</button>
-        <button class="period-btn {% if days == 90 %}active{% endif %}" onclick="setPeriod(90)">3 месяца</button>
-        <button class="period-btn {% if days == 365 %}active{% endif %}" onclick="setPeriod(365)">Год</button>
+        <button class="period-btn {% if days == 7 and not request.query_params.get('date_from') %}active{% endif %}" onclick="setPeriod(7)">7 дней</button>
+        <button class="period-btn {% if days == 30 and not request.query_params.get('date_from') %}active{% endif %}" onclick="setPeriod(30)">Месяц</button>
+        <button class="period-btn {% if days == 90 and not request.query_params.get('date_from') %}active{% endif %}" onclick="setPeriod(90)">3 месяца</button>
+        <button class="period-btn {% if days == 365 and not request.query_params.get('date_from') %}active{% endif %}" onclick="setPeriod(365)">Год</button>
+        <button class="period-btn" onclick="toggleCustomRange()">📅</button>
+    </div>
+
+    <!-- Custom Date Range -->
+    <div class="date-range-row" id="date-range-row" style="display: {% if request.query_params.get('date_from') %}flex{% else %}none{% endif %};">
+        <input type="date" class="date-input" id="date-from" value="{{ request.query_params.get('date_from', '') }}">
+        <span style="color: rgba(255,255,255,0.5);">—</span>
+        <input type="date" class="date-input" id="date-to" value="{{ request.query_params.get('date_to', '') }}">
+        <button class="apply-btn" onclick="applyDateRange()">OK</button>
     </div>
 
     <!-- Summary -->
@@ -210,6 +264,7 @@
         <div class="category-list" id="category-list"></div>
     </div>
 </div>
+</div>
 
 <nav class="nav-bottom">
     <a href="/finance" class="nav-item">
@@ -237,11 +292,42 @@ let dailyChart = null;
 let categoryChart = null;
 const eventId = {{ selected_event.id if selected_event else 'null' }};
 let currentDays = {{ days }};
+let dateFrom = '{{ request.query_params.get("date_from", "") }}';
+let dateTo = '{{ request.query_params.get("date_to", "") }}';
 
 function setPeriod(days) {
     const url = new URL(window.location.href);
     url.searchParams.set('days', days);
+    url.searchParams.delete('date_from');
+    url.searchParams.delete('date_to');
     window.location.href = url.toString();
+}
+
+function toggleCustomRange() {
+    const row = document.getElementById('date-range-row');
+    row.style.display = row.style.display === 'none' ? 'flex' : 'none';
+    if (row.style.display === 'flex') {
+        const today = new Date().toISOString().split('T')[0];
+        const weekAgo = new Date(Date.now() - 7*24*60*60*1000).toISOString().split('T')[0];
+        if (!document.getElementById('date-from').value) {
+            document.getElementById('date-from').value = weekAgo;
+        }
+        if (!document.getElementById('date-to').value) {
+            document.getElementById('date-to').value = today;
+        }
+    }
+}
+
+function applyDateRange() {
+    const from = document.getElementById('date-from').value;
+    const to = document.getElementById('date-to').value;
+    if (from && to) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('date_from', from);
+        url.searchParams.set('date_to', to);
+        url.searchParams.delete('days');
+        window.location.href = url.toString();
+    }
 }
 
 function formatAmount(n) {
@@ -253,7 +339,13 @@ function formatAmount(n) {
 }
 
 async function loadAnalytics() {
-    const params = new URLSearchParams({ days: currentDays });
+    const params = new URLSearchParams();
+    if (dateFrom && dateTo) {
+        params.append('date_from', dateFrom);
+        params.append('date_to', dateTo);
+    } else {
+        params.append('days', currentDays);
+    }
     if (eventId) params.append('event_id', eventId);
     
     try {
@@ -261,6 +353,10 @@ async function loadAnalytics() {
             fetch(`/finance/api/analytics/daily?${params}`),
             fetch(`/finance/api/analytics/by-category?${params}`)
         ]);
+        
+        if (!dailyRes.ok || !categoryRes.ok) {
+            throw new Error('API error');
+        }
         
         const dailyData = await dailyRes.json();
         const categoryData = await categoryRes.json();
@@ -283,6 +379,9 @@ async function loadAnalytics() {
         
     } catch (e) {
         console.error('Failed to load analytics:', e);
+        document.getElementById('total-expenses').textContent = '$0';
+        document.getElementById('total-income').textContent = '$0';
+        document.getElementById('total-balance').textContent = '$0';
     }
 }
 
@@ -336,8 +435,14 @@ function renderDailyChart(data) {
 
 function renderCategoryChart(data) {
     const ctx = document.getElementById('categoryChart').getContext('2d');
+    const listEl = document.getElementById('category-list');
     
     if (categoryChart) categoryChart.destroy();
+    
+    if (!data.categories || data.categories.length === 0) {
+        listEl.innerHTML = '<div class="empty-state">Нет расходов за период</div>';
+        return;
+    }
     
     const colors = [
         '#4361ee', '#7209b7', '#f72585', '#4cc9f0', '#4ade80',
@@ -378,7 +483,7 @@ function renderCategoryChart(data) {
         </div>
     `).join('');
     
-    document.getElementById('category-list').innerHTML = listHtml;
+    listEl.innerHTML = listHtml;
 }
 
 loadAnalytics();
