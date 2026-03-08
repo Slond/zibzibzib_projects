@@ -200,15 +200,15 @@
     <div class="stats-grid" id="stats-container">
         <div class="stat-card">
             <div class="stat-value" id="total-month">...</div>
-            <div class="stat-label">Этот месяц</div>
+            <div class="stat-label">Баланс (USD)</div>
         </div>
         <div class="stat-card expense">
             <div class="stat-value" id="expenses-month">...</div>
-            <div class="stat-label">Расходы</div>
+            <div class="stat-label">Расходы (USD)</div>
         </div>
         <div class="stat-card income">
             <div class="stat-value" id="income-month">...</div>
-            <div class="stat-label">Доходы</div>
+            <div class="stat-label">Доходы (USD)</div>
         </div>
     </div>
 
@@ -266,9 +266,9 @@ async function loadData(eventId = null) {
         const stats = await statsRes.json();
         const transactions = await transRes.json();
         
-        document.getElementById('total-month').textContent = formatAmount(stats.total);
-        document.getElementById('expenses-month').textContent = formatAmount(stats.expenses);
-        document.getElementById('income-month').textContent = formatAmount(stats.income);
+        document.getElementById('total-month').textContent = '$' + formatAmount(stats.total);
+        document.getElementById('expenses-month').textContent = '$' + formatAmount(stats.expenses);
+        document.getElementById('income-month').textContent = '$' + formatAmount(stats.income);
         
         const container = document.getElementById('transactions-container');
         if (transactions.length === 0) {

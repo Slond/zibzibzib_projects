@@ -181,15 +181,15 @@
     <div class="summary-grid">
         <div class="summary-card">
             <div class="summary-value expense" id="total-expenses">...</div>
-            <div class="summary-label">Расходы</div>
+            <div class="summary-label">Расходы (USD)</div>
         </div>
         <div class="summary-card">
             <div class="summary-value income" id="total-income">...</div>
-            <div class="summary-label">Доходы</div>
+            <div class="summary-label">Доходы (USD)</div>
         </div>
         <div class="summary-card">
             <div class="summary-value" id="total-balance">...</div>
-            <div class="summary-label">Баланс</div>
+            <div class="summary-label">Баланс (USD)</div>
         </div>
     </div>
 
@@ -265,14 +265,14 @@ async function loadAnalytics() {
         const dailyData = await dailyRes.json();
         const categoryData = await categoryRes.json();
         
-        // Update summary
+        // Update summary (all values in USD)
         const totalExpenses = dailyData.reduce((sum, d) => sum + d.expenses, 0);
         const totalIncome = dailyData.reduce((sum, d) => sum + d.income, 0);
-        document.getElementById('total-expenses').textContent = formatAmount(totalExpenses);
-        document.getElementById('total-income').textContent = formatAmount(totalIncome);
+        document.getElementById('total-expenses').textContent = '$' + formatAmount(totalExpenses);
+        document.getElementById('total-income').textContent = '$' + formatAmount(totalIncome);
         const balance = totalIncome - totalExpenses;
         const balanceEl = document.getElementById('total-balance');
-        balanceEl.textContent = (balance >= 0 ? '+' : '') + formatAmount(balance);
+        balanceEl.textContent = (balance >= 0 ? '+$' : '-$') + formatAmount(Math.abs(balance));
         balanceEl.style.color = balance >= 0 ? '#4ade80' : '#f87171';
         
         // Daily chart

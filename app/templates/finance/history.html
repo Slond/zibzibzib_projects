@@ -30,9 +30,8 @@
     display: flex;
     gap: 8px;
     overflow-x: auto;
-    padding: 4px 0 20px;
-    margin-bottom: 16px;
-    border-bottom: 1px solid rgba(255,255,255,0.1);
+    padding: 4px 0 16px;
+    margin-bottom: 12px;
 }
 .filter-bar::-webkit-scrollbar { display: none; }
 .filter-chip {
@@ -59,73 +58,101 @@
 .transactions-list {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 8px;
 }
 .transaction-item {
-    background: rgba(255,255,255,0.05);
+    background: rgba(255,255,255,0.03);
     border-radius: 12px;
-    padding: 16px;
+    padding: 14px 16px;
     display: flex;
     justify-content: space-between;
     align-items: center;
     transition: background 0.2s;
+    gap: 12px;
 }
-.transaction-item:hover {
+.transaction-item:hover,
+.transaction-item:active {
     background: rgba(255,255,255,0.08);
 }
 .transaction-info {
     display: flex;
     flex-direction: column;
     gap: 4px;
+    min-width: 0;
+    flex: 1;
 }
-.transaction-merchant { font-weight: 500; }
+.transaction-merchant { 
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
 .transaction-meta {
     font-size: 12px;
     color: rgba(255,255,255,0.4);
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
+    flex-wrap: wrap;
 }
 .transaction-amount {
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 .transaction-amount.negative { color: #f87171; }
 .transaction-amount.positive { color: #4ade80; }
 .category-chip {
     display: inline-block;
-    padding: 3px 8px;
+    padding: 2px 6px;
     background: rgba(67, 97, 238, 0.2);
-    border-radius: 10px;
-    font-size: 11px;
+    border-radius: 8px;
+    font-size: 10px;
     color: #a5b4fc;
 }
-.pagination {
-    display: flex;
-    justify-content: center;
-    gap: 16px;
-    padding: 24px 0;
+.load-more-container {
+    padding: 20px 0 40px;
+    text-align: center;
 }
-.pagination a {
-    padding: 10px 20px;
+.load-more-btn {
+    display: inline-block;
+    padding: 14px 32px;
     background: rgba(255,255,255,0.05);
-    border-radius: 8px;
-    font-size: 14px;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 12px;
     color: rgba(255,255,255,0.7);
+    font-size: 14px;
+    cursor: pointer;
     transition: all 0.2s;
 }
-.pagination a:hover {
+.load-more-btn:hover {
     background: #4361ee;
+    border-color: transparent;
     color: #fff;
 }
-.pagination a.disabled {
-    opacity: 0.3;
+.load-more-btn.loading {
     pointer-events: none;
+    opacity: 0.6;
+}
+.page-info {
+    font-size: 12px;
+    color: rgba(255,255,255,0.3);
+    margin-top: 12px;
 }
 .empty-state {
     text-align: center;
     padding: 60px 20px;
     color: rgba(255,255,255,0.4);
+}
+.date-divider {
+    font-size: 12px;
+    color: rgba(255,255,255,0.4);
+    padding: 16px 0 8px;
+    font-weight: 500;
+}
+.date-divider:first-child {
+    padding-top: 0;
 }
 {% endblock %}
 
@@ -137,11 +164,11 @@
     </div>
 </div>
 
-<div class="content" style="padding-bottom:100px;">
+<div class="content" style="padding-bottom:80px;">
     {% if events|length > 1 %}
     <div class="event-filter">
         <a href="/finance/history{% if current_category %}?category={{ current_category }}{% endif %}" 
-           class="event-chip {% if not selected_event %}active{% endif %}">Все события</a>
+           class="event-chip {% if not selected_event %}active{% endif %}">Все</a>
         {% for evt in events %}
         <a href="/finance/history?event={{ evt.id }}{% if current_category %}&category={{ current_category }}{% endif %}" 
            class="event-chip {% if selected_event and selected_event.id == evt.id %}active{% endif %}">
@@ -163,14 +190,20 @@
     </div>
 
     {% if transactions %}
-    <div class="transactions-list">
+    <div class="transactions-list" id="transactions-list">
+        {% set current_date = None %}
         {% for t in transactions %}
+        {% set tx_date = t.timestamp.strftime('%d %B %Y') %}
+        {% if tx_date != current_date %}
+        {% set current_date = tx_date %}
+        <div class="date-divider">{{ t.timestamp.strftime('%d %B') }}</div>
+        {% endif %}
         <a href="/finance/add?event={{ t.event_id or '' }}&edit={{ t.id }}" class="transaction-item">
             <div class="transaction-info">
-                <span class="transaction-merchant">{{ t.description or 'Операция' }}</span>
+                <span class="transaction-merchant">{{ t.description or t.category or 'Операция' }}</span>
                 <span class="transaction-meta">
                     {% if t.category %}<span class="category-chip">{{ t.category }}</span>{% endif %}
-                    {{ t.timestamp.strftime('%d %b %H:%M') }}
+                    {{ t.timestamp.strftime('%H:%M') }}
                     {% if t.source == 'shortcut' %}
                     <span style="color:#4361ee;">• shortcut</span>
                     {% endif %}
@@ -184,19 +217,17 @@
         {% endfor %}
     </div>
 
-    <div class="pagination">
+    {% if has_more %}
+    <div class="load-more-container">
         {% set base_url = '/finance/history?' %}
         {% if selected_event %}{% set base_url = base_url ~ 'event=' ~ selected_event.id ~ '&' %}{% endif %}
         {% if current_category %}{% set base_url = base_url ~ 'category=' ~ current_category ~ '&' %}{% endif %}
-        <a href="{% if page > 1 %}{{ base_url }}page={{ page - 1 }}{% else %}#{% endif %}"
-           class="{% if page <= 1 %}disabled{% endif %}">
-            ← Назад
+        <a href="{{ base_url }}page={{ page + 1 }}" class="load-more-btn" id="load-more">
+            Загрузить ещё
         </a>
-        <a href="{% if has_more %}{{ base_url }}page={{ page + 1 }}{% else %}#{% endif %}"
-           class="{% if not has_more %}disabled{% endif %}">
-            Далее →
-        </a>
+        <div class="page-info">Страница {{ page }}</div>
     </div>
+    {% endif %}
     {% else %}
     <div class="empty-state">
         Нет операций{% if current_category %} в категории "{{ current_category }}"{% endif %}

@@ -2,23 +2,31 @@
 {% block title %}{{ 'Редактировать' if transaction else 'Добавить' }} - Финансы{% endblock %}
 
 {% block extra_styles %}
+.add-form-container {
+    max-width: 400px;
+    margin: 0 auto;
+}
 .amount-input-container {
     margin-bottom: 24px;
 }
 .amount-row {
     display: flex;
+    flex-direction: column;
     align-items: center;
     gap: 12px;
 }
 .amount-input {
-    flex: 1;
+    width: 100%;
     text-align: center;
     font-size: 48px;
     font-weight: 700;
     background: transparent;
     border: none;
     color: #fff;
-    padding: 20px 0;
+    padding: 16px 0;
+}
+@media (max-width: 400px) {
+    .amount-input { font-size: 40px; }
 }
 .amount-input:focus {
     outline: none;
@@ -26,20 +34,73 @@
 .amount-input::placeholder {
     color: rgba(255,255,255,0.2);
 }
-.currency-select {
-    font-size: 18px;
+.currency-combo {
+    position: relative;
+    display: inline-block;
+}
+.currency-input {
+    font-size: 16px;
     font-weight: 600;
     background: rgba(255,255,255,0.05);
     border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 8px;
+    border-radius: 20px;
     color: #fff;
-    padding: 12px 16px;
+    padding: 10px 20px;
+    text-align: center;
+    width: 100px;
+    text-transform: uppercase;
     cursor: pointer;
-    min-width: 80px;
 }
-.currency-select:focus {
+.currency-input:focus {
     outline: none;
     border-color: #4361ee;
+}
+.currency-input::placeholder {
+    color: rgba(255,255,255,0.4);
+    text-transform: none;
+}
+.currency-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1a1a2e;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 12px;
+    margin-top: 8px;
+    min-width: 120px;
+    max-height: 200px;
+    overflow-y: auto;
+    z-index: 100;
+    display: none;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+.currency-dropdown.open {
+    display: block;
+}
+.currency-option {
+    padding: 10px 16px;
+    cursor: pointer;
+    font-size: 14px;
+    text-align: center;
+    transition: background 0.15s;
+}
+.currency-option:hover,
+.currency-option.highlighted {
+    background: rgba(67, 97, 238, 0.3);
+}
+.currency-option:first-child {
+    border-radius: 11px 11px 0 0;
+}
+.currency-option:last-child {
+    border-radius: 0 0 11px 11px;
+}
+.currency-error {
+    color: #f87171;
+    font-size: 12px;
+    text-align: center;
+    margin-top: 8px;
+    display: none;
 }
 .type-toggle {
     display: flex;
@@ -110,24 +171,37 @@
     border-color: transparent;
     color: #fff;
 }
-.actions-bottom {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    padding: 16px 20px;
-    padding-bottom: max(16px, env(safe-area-inset-bottom));
-    background: #0f0f1a;
+.actions-inline {
     display: flex;
     gap: 12px;
+    margin-top: 32px;
+    padding-bottom: 40px;
 }
-.actions-bottom .btn { flex: 1; }
-.custom-currency {
-    margin-top: 8px;
+.actions-inline .btn { flex: 1; }
+.date-row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
 }
-.custom-currency input {
-    width: 100%;
-    text-transform: uppercase;
+.date-row input[type="date"] {
+    flex: 1;
+}
+.date-row input[type="time"] {
+    width: 120px;
+}
+.date-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: rgba(255,255,255,0.6);
+    cursor: pointer;
+    margin-bottom: 8px;
+}
+.date-toggle input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    accent-color: #4361ee;
 }
 {% endblock %}
 
@@ -146,101 +220,131 @@
     {% endif %}
 </div>
 
-<div class="content" style="padding-bottom:120px;">
-    <form method="POST" action="/finance/add" id="add-form">
-        {% if transaction %}
-        <input type="hidden" name="transaction_id" value="{{ transaction.id }}">
-        {% endif %}
+<div class="content">
+    <div class="add-form-container">
+        <form method="POST" action="/finance/add" id="add-form">
+            {% if transaction %}
+            <input type="hidden" name="transaction_id" value="{{ transaction.id }}">
+            {% endif %}
 
-        <!-- Event selector -->
-        {% if events|length > 1 %}
-        <select name="event_id" class="event-select" id="event-select">
-            {% for evt in events %}
-            <option value="{{ evt.id }}" 
-                    data-currency="{{ evt.default_currency }}"
-                    {% if selected_event and selected_event.id == evt.id %}selected{% endif %}>
-                {{ evt.name }}
-            </option>
-            {% endfor %}
-        </select>
-        {% else %}
-        <input type="hidden" name="event_id" value="{{ selected_event.id if selected_event else '' }}">
-        {% endif %}
-
-        <div class="type-toggle">
-            <button type="button" class="type-btn expense active" onclick="setType('expense')">Расход</button>
-            <button type="button" class="type-btn income" onclick="setType('income')">Доход</button>
-        </div>
-
-        <div class="amount-input-container">
-            <div class="amount-row">
-                <input type="text" 
-                       name="amount" 
-                       class="amount-input" 
-                       placeholder="0" 
-                       inputmode="decimal"
-                       id="amount-input"
-                       value="{{ transaction.amount|abs if transaction else '' }}"
-                       required>
-                <select name="currency" class="currency-select" id="currency-select">
-                    {% for cur in currencies %}
-                    <option value="{{ cur }}" 
-                            {% if (transaction and transaction.currency == cur) or (not transaction and cur == default_currency) %}selected{% endif %}>
-                        {{ cur }}
-                    </option>
-                    {% endfor %}
-                    <option value="other">Другая...</option>
-                </select>
-            </div>
-            <div class="custom-currency" id="custom-currency-row" style="display:none;">
-                <input type="text" 
-                       id="custom-currency-input"
-                       placeholder="Код валюты (USD, EUR...)" 
-                       maxlength="3"
-                       pattern="[A-Za-z]{3}">
-            </div>
-        </div>
-
-        <div class="form-group">
-            <label>Категория</label>
-            <div class="categories-scroll">
-                {% for cat in categories %}
-                <button type="button" 
-                        class="category-chip-btn {% if transaction and transaction.category == cat.name %}selected{% endif %}"
-                        onclick="selectCategory(this, '{{ cat.name }}')">
-                    {{ cat.icon or '' }} {{ cat.name }}
-                </button>
+            <!-- Event selector -->
+            {% if events|length > 1 %}
+            <select name="event_id" class="event-select" id="event-select">
+                {% for evt in events %}
+                <option value="{{ evt.id }}" 
+                        data-currency="{{ evt.default_currency }}"
+                        {% if selected_event and selected_event.id == evt.id %}selected{% endif %}>
+                    {{ evt.name }}
+                </option>
                 {% endfor %}
+            </select>
+            {% else %}
+            <input type="hidden" name="event_id" value="{{ selected_event.id if selected_event else '' }}">
+            {% endif %}
+
+            <div class="type-toggle">
+                <button type="button" class="type-btn expense active" onclick="setType('expense')">Расход</button>
+                <button type="button" class="type-btn income" onclick="setType('income')">Доход</button>
             </div>
-            <input type="text" 
-                   name="category" 
-                   id="category-input"
-                   placeholder="Или введите новую" 
-                   value="{{ transaction.category or '' }}">
-        </div>
 
-        <div class="form-group">
-            <label>Описание</label>
-            <input type="text" name="description" placeholder="Комментарий (опционально)" value="{{ transaction.description or '' }}">
-        </div>
+            <div class="amount-input-container">
+                <div class="amount-row">
+                    <input type="text" 
+                           name="amount" 
+                           class="amount-input" 
+                           placeholder="0" 
+                           inputmode="decimal"
+                           id="amount-input"
+                           value="{{ transaction.amount|abs if transaction else '' }}"
+                           required>
+                    <div class="currency-combo">
+                        <input type="text" 
+                               name="currency" 
+                               class="currency-input" 
+                               id="currency-input"
+                               placeholder="USD"
+                               maxlength="3"
+                               autocomplete="off"
+                               value="{{ transaction.currency if transaction else default_currency }}">
+                        <div class="currency-dropdown" id="currency-dropdown">
+                            {% for cur in currencies %}
+                            <div class="currency-option" data-value="{{ cur }}">{{ cur }}</div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+                <div class="currency-error" id="currency-error">Неизвестная валюта</div>
+            </div>
 
-        <input type="hidden" name="is_expense" id="is-expense-input" value="1">
-    </form>
-</div>
+            <div class="form-group">
+                <label>Категория</label>
+                <div class="categories-scroll">
+                    {% for cat in categories %}
+                    <button type="button" 
+                            class="category-chip-btn {% if transaction and transaction.category == cat.name %}selected{% endif %}"
+                            onclick="selectCategory(this, '{{ cat.name }}')">
+                        {{ cat.icon or '' }} {{ cat.name }}
+                    </button>
+                    {% endfor %}
+                </div>
+                <input type="text" 
+                       name="category" 
+                       id="category-input"
+                       placeholder="Или введите новую" 
+                       value="{{ transaction.category or '' }}">
+            </div>
 
-<div class="actions-bottom">
-    <a href="/finance" class="btn secondary" style="text-align:center;">Отмена</a>
-    <button type="submit" form="add-form" class="btn">{{ 'Сохранить' if transaction else 'Добавить' }}</button>
+            <div class="form-group">
+                <label>Описание</label>
+                <input type="text" name="description" placeholder="Комментарий (опционально)" value="{{ transaction.description or '' }}">
+            </div>
+
+            <div class="form-group">
+                <label class="date-toggle">
+                    <input type="checkbox" id="custom-date-toggle" {% if transaction %}checked{% endif %}>
+                    Указать дату
+                </label>
+                <div class="date-row" id="date-row" style="{% if not transaction %}display:none;{% endif %}">
+                    <input type="date" 
+                           name="custom_date" 
+                           id="custom-date-input"
+                           value="{{ transaction.timestamp.strftime('%Y-%m-%d') if transaction else '' }}">
+                    <input type="time" 
+                           name="custom_time" 
+                           id="custom-time-input"
+                           value="{{ transaction.timestamp.strftime('%H:%M') if transaction else '' }}">
+                </div>
+            </div>
+
+            <div class="actions-inline">
+                <a href="/finance" class="btn secondary" style="text-align:center;">Отмена</a>
+                <button type="submit" class="btn">{{ 'Сохранить' if transaction else 'Добавить' }}</button>
+            </div>
+
+            <input type="hidden" name="is_expense" id="is-expense-input" value="1">
+        </form>
+    </div>
 </div>
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
 let isExpense = true;
-const currencySelect = document.getElementById('currency-select');
-const customCurrencyRow = document.getElementById('custom-currency-row');
-const customCurrencyInput = document.getElementById('custom-currency-input');
 const eventSelect = document.getElementById('event-select');
+const currencyInput = document.getElementById('currency-input');
+const currencyDropdown = document.getElementById('currency-dropdown');
+const currencyError = document.getElementById('currency-error');
+const currencyOptions = document.querySelectorAll('.currency-option');
+
+// Valid ISO 4217 currency codes (common ones)
+const validCurrencies = new Set([
+    'USD', 'EUR', 'GBP', 'JPY', 'CHF', 'CAD', 'AUD', 'NZD', 'CNY', 'HKD',
+    'SGD', 'SEK', 'NOK', 'DKK', 'KRW', 'INR', 'RUB', 'BRL', 'MXN', 'ZAR',
+    'TRY', 'PLN', 'THB', 'IDR', 'MYR', 'PHP', 'CZK', 'ILS', 'AED', 'SAR',
+    'KZT', 'UAH', 'BYN', 'GEL', 'AMD', 'AZN', 'UZS', 'KGS', 'TJS', 'TMT',
+    'BGN', 'HRK', 'RON', 'HUF', 'ISK', 'VND', 'EGP', 'NGN', 'KES', 'PKR',
+    'BDT', 'LKR', 'NPR', 'TWD', 'CLP', 'COP', 'PEN', 'ARS', 'VES'
+]);
 
 {% if transaction and transaction.amount > 0 %}
 isExpense = false;
@@ -261,14 +365,67 @@ function selectCategory(btn, name) {
     document.getElementById('category-input').value = name;
 }
 
-// Currency selector
-currencySelect.addEventListener('change', function() {
-    if (this.value === 'other') {
-        customCurrencyRow.style.display = 'block';
-        customCurrencyInput.focus();
-    } else {
-        customCurrencyRow.style.display = 'none';
+// Currency combo-box
+let dropdownOpen = false;
+
+function openDropdown() {
+    currencyDropdown.classList.add('open');
+    dropdownOpen = true;
+    filterOptions();
+}
+
+function closeDropdown() {
+    currencyDropdown.classList.remove('open');
+    dropdownOpen = false;
+}
+
+function filterOptions() {
+    const val = currencyInput.value.toUpperCase();
+    currencyOptions.forEach(opt => {
+        const match = opt.dataset.value.includes(val);
+        opt.style.display = match ? 'block' : 'none';
+    });
+}
+
+function selectCurrency(value) {
+    currencyInput.value = value;
+    currencyError.style.display = 'none';
+    closeDropdown();
+}
+
+currencyInput.addEventListener('focus', openDropdown);
+currencyInput.addEventListener('click', openDropdown);
+
+currencyInput.addEventListener('input', function() {
+    this.value = this.value.toUpperCase();
+    currencyError.style.display = 'none';
+    filterOptions();
+    if (!dropdownOpen) openDropdown();
+});
+
+currencyInput.addEventListener('blur', function() {
+    // Delay to allow click on options
+    setTimeout(closeDropdown, 150);
+});
+
+currencyInput.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        closeDropdown();
+    } else if (e.key === 'Enter' && dropdownOpen) {
+        e.preventDefault();
+        const visible = [...currencyOptions].filter(o => o.style.display !== 'none');
+        if (visible.length === 1) {
+            selectCurrency(visible[0].dataset.value);
+        }
+        closeDropdown();
     }
+});
+
+currencyOptions.forEach(opt => {
+    opt.addEventListener('mousedown', function(e) {
+        e.preventDefault();
+        selectCurrency(this.dataset.value);
+    });
 });
 
 // Event selector - update default currency
@@ -276,12 +433,20 @@ if (eventSelect) {
     eventSelect.addEventListener('change', function() {
         const selectedOption = this.options[this.selectedIndex];
         const defaultCurrency = selectedOption.dataset.currency;
-        if (defaultCurrency && currencySelect.value !== 'other') {
-            currencySelect.value = defaultCurrency;
+        if (defaultCurrency) {
+            currencyInput.value = defaultCurrency;
         }
     });
 }
 
+// Close dropdown when clicking outside
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('.currency-combo')) {
+        closeDropdown();
+    }
+});
+
+// Form submission
 document.getElementById('add-form').addEventListener('submit', function(e) {
     const amountInput = document.getElementById('amount-input');
     let val = amountInput.value.replace(/[^\d.,]/g, '').replace(',', '.');
@@ -289,19 +454,57 @@ document.getElementById('add-form').addEventListener('submit', function(e) {
         e.preventDefault();
         return;
     }
+    
+    // Validate currency
+    const currency = currencyInput.value.toUpperCase().trim();
+    if (!currency || currency.length !== 3) {
+        e.preventDefault();
+        currencyError.textContent = 'Введите код валюты (3 буквы)';
+        currencyError.style.display = 'block';
+        currencyInput.focus();
+        return;
+    }
+    
+    if (!validCurrencies.has(currency)) {
+        // Show warning but allow submission (API might support it)
+        if (!confirm(`Валюта "${currency}" может не поддерживаться. Продолжить?`)) {
+            e.preventDefault();
+            currencyInput.focus();
+            return;
+        }
+    }
+    
+    currencyInput.value = currency;
+    
     let amount = parseFloat(val);
     if (isExpense && amount > 0) amount = -amount;
     if (!isExpense && amount < 0) amount = -amount;
     amountInput.value = amount.toString();
-    
-    // Handle custom currency
-    if (currencySelect.value === 'other' && customCurrencyInput.value) {
-        currencySelect.value = customCurrencyInput.value.toUpperCase();
-    }
 });
 
 document.getElementById('amount-input').addEventListener('focus', function() {
     this.select();
+});
+
+// Date toggle
+const dateToggle = document.getElementById('custom-date-toggle');
+const dateRow = document.getElementById('date-row');
+const dateInput = document.getElementById('custom-date-input');
+const timeInput = document.getElementById('custom-time-input');
+
+dateToggle.addEventListener('change', function() {
+    if (this.checked) {
+        dateRow.style.display = 'flex';
+        if (!dateInput.value) {
+            const now = new Date();
+            dateInput.value = now.toISOString().split('T')[0];
+            timeInput.value = now.toTimeString().slice(0, 5);
+        }
+    } else {
+        dateRow.style.display = 'none';
+        dateInput.value = '';
+        timeInput.value = '';
+    }
 });
 </script>
 {% endblock %}

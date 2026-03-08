@@ -245,6 +245,8 @@ async def add_transaction(
     currency: str = Form("KZT"),
     description: str = Form(None),
     transaction_id: int = Form(None),
+    custom_date: str = Form(None),
+    custom_time: str = Form(None),
 ):
     user = await require_finance_access(request)
     if not user or not user.finance_account_id:
@@ -255,10 +257,22 @@ async def add_transaction(
     except:
         return RedirectResponse(url=f"/finance/add?event={event_id}&error=invalid_amount", status_code=302)
 
+    # Parse custom date if provided
+    transaction_timestamp = utcnow()
+    transaction_date = None
+    if custom_date:
+        try:
+            time_str = custom_time or "12:00"
+            dt_str = f"{custom_date} {time_str}"
+            transaction_timestamp = datetime.strptime(dt_str, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+            transaction_date = datetime.strptime(custom_date, "%Y-%m-%d").date()
+        except ValueError:
+            pass
+
     budget_alert = None
     
-    # Convert to USD
-    amount_usd, exchange_rate = await convert_to_usd(amount_decimal, currency)
+    # Convert to USD (using transaction date for historical rate if needed)
+    amount_usd, exchange_rate = await convert_to_usd(amount_decimal, currency, for_date=transaction_date)
 
     async with async_session() as session:
         if transaction_id:
@@ -277,6 +291,7 @@ async def add_transaction(
                 transaction.amount_usd = amount_usd
                 transaction.exchange_rate = exchange_rate
                 transaction.description = description or None
+                transaction.timestamp = transaction_timestamp
                 transaction.created_by_user_id = user.id
         else:
             transaction = Transaction(
@@ -288,7 +303,7 @@ async def add_transaction(
                 exchange_rate=exchange_rate,
                 category=category or None,
                 description=description or None,
-                timestamp=utcnow(),
+                timestamp=transaction_timestamp,
                 source="manual",
                 created_by_user_id=user.id,
             )
@@ -683,10 +698,13 @@ async def api_get_stats(
         if event_id:
             base_filter.append(Transaction.event_id == event_id)
         
+        # Use amount_usd for consistent currency, fallback to amount if null
+        usd_amount = func.coalesce(Transaction.amount_usd, Transaction.amount)
+        
         result = await session.execute(
             select(
                 Transaction.category,
-                func.sum(Transaction.amount).label("total"),
+                func.sum(usd_amount).label("total"),
                 func.count(Transaction.id).label("count"),
             )
             .where(and_(*base_filter))
@@ -695,20 +713,20 @@ async def api_get_stats(
         rows = result.all()
 
         total_result = await session.execute(
-            select(func.sum(Transaction.amount))
+            select(func.sum(usd_amount))
             .where(and_(*base_filter))
         )
         total = total_result.scalar() or 0
         
-        # Get expenses and income separately
+        # Get expenses and income separately (in USD)
         expenses_result = await session.execute(
-            select(func.sum(Transaction.amount))
+            select(func.sum(usd_amount))
             .where(and_(*base_filter, Transaction.amount < 0))
         )
         expenses = expenses_result.scalar() or 0
         
         income_result = await session.execute(
-            select(func.sum(Transaction.amount))
+            select(func.sum(usd_amount))
             .where(and_(*base_filter, Transaction.amount > 0))
         )
         income = income_result.scalar() or 0
@@ -716,6 +734,7 @@ async def api_get_stats(
         return {
             "period_days": days,
             "event_id": event_id,
+            "currency": "USD",
             "total": float(total),
             "expenses": float(abs(expenses)),
             "income": float(income),
@@ -1179,12 +1198,15 @@ async def api_analytics_daily(
         if event_id:
             base_filter.append(Transaction.event_id == event_id)
         
-        # Daily aggregation
+        # Use amount_usd for consistent currency, fallback to amount if null
+        usd_amount = func.coalesce(Transaction.amount_usd, Transaction.amount)
+        
+        # Daily aggregation (in USD)
         result = await session.execute(
             select(
                 func.date(Transaction.timestamp).label("day"),
-                func.sum(func.case((Transaction.amount < 0, Transaction.amount), else_=0)).label("expenses"),
-                func.sum(func.case((Transaction.amount > 0, Transaction.amount), else_=0)).label("income"),
+                func.sum(func.case((Transaction.amount < 0, usd_amount), else_=0)).label("expenses"),
+                func.sum(func.case((Transaction.amount > 0, usd_amount), else_=0)).label("income"),
             )
             .where(and_(*base_filter))
             .group_by(func.date(Transaction.timestamp))
@@ -1224,21 +1246,25 @@ async def api_analytics_by_category(
         if event_id:
             base_filter.append(Transaction.event_id == event_id)
         
+        # Use amount_usd for consistent currency, fallback to amount if null
+        usd_amount = func.coalesce(Transaction.amount_usd, Transaction.amount)
+        
         result = await session.execute(
             select(
                 Transaction.category,
-                func.sum(func.abs(Transaction.amount)).label("total"),
+                func.sum(func.abs(usd_amount)).label("total"),
                 func.count(Transaction.id).label("count"),
             )
             .where(and_(*base_filter))
             .group_by(Transaction.category)
-            .order_by(desc(func.sum(func.abs(Transaction.amount))))
+            .order_by(desc(func.sum(func.abs(usd_amount))))
         )
         rows = result.all()
         
         total = sum(float(row.total or 0) for row in rows)
 
         return {
+            "currency": "USD",
             "total": total,
             "categories": [
                 {
