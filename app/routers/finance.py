@@ -53,6 +53,7 @@ async def require_finance_access(request: Request):
 
 class WebhookData(BaseModel):
     amount: Optional[float] = None
+    type: Optional[str] = "expense"  # "expense" or "income"
     category: Optional[str] = None
     description: Optional[str] = None
     currency: Optional[str] = None
@@ -60,20 +61,32 @@ class WebhookData(BaseModel):
 
 @router.post("/api/webhook/{webhook_token}")
 async def webhook_notification(webhook_token: str, data: WebhookData = None):
-    """iOS Shortcut sends request here when bank notification arrives.
-    Each event has its own webhook token."""
+    """iOS Shortcut sends transaction data here.
+    
+    Accepts positive amount with type field:
+    - type="expense" -> amount becomes negative
+    - type="income" -> amount stays positive
+    """
     event = await get_finance_event_by_webhook(webhook_token)
     if not event:
         raise HTTPException(status_code=404, detail="Invalid webhook token")
 
     async with async_session() as session:
-        # Refresh event to get account_id
         event_result = await session.execute(
             select(FinanceEvent).where(FinanceEvent.id == event.id)
         )
         event_fresh = event_result.scalar_one()
         
-        amount = Decimal(str(data.amount)) if data and data.amount else Decimal("0")
+        # Parse amount (always positive from Shortcut)
+        raw_amount = abs(Decimal(str(data.amount))) if data and data.amount else Decimal("0")
+        
+        # Apply sign based on type
+        tx_type = (data.type or "expense").lower() if data else "expense"
+        if tx_type == "expense":
+            amount = -raw_amount
+        else:
+            amount = raw_amount
+        
         currency = data.currency if data and data.currency else event_fresh.default_currency
         
         # Convert to USD
@@ -99,6 +112,7 @@ async def webhook_notification(webhook_token: str, data: WebhookData = None):
             "status": "ok",
             "transaction_id": transaction.id,
             "event_id": event_fresh.id,
+            "type": tx_type,
             "amount": float(amount),
             "currency": currency,
             "amount_usd": float(amount_usd),
@@ -109,7 +123,7 @@ async def webhook_notification(webhook_token: str, data: WebhookData = None):
 
 @router.get("/api/webhook/{webhook_token}/categories")
 async def webhook_get_categories(webhook_token: str):
-    """Get categories for iOS Shortcut picker (no auth, token-based)"""
+    """Get categories for iOS Shortcut picker (simple string list)"""
     event = await get_finance_event_by_webhook(webhook_token)
     if not event:
         raise HTTPException(status_code=404, detail="Invalid webhook token")
@@ -128,13 +142,17 @@ async def webhook_get_categories(webhook_token: str):
         )
         categories = result.all()
         
+        # Return simple list of strings for Shortcuts compatibility
+        category_names = [
+            f"{cat.icon} {cat.name}".strip() if cat.icon else cat.name
+            for cat in categories
+        ]
+        
         return {
             "event_name": event_fresh.name,
             "default_currency": event_fresh.default_currency,
-            "categories": [
-                {"name": cat.name, "icon": cat.icon or ""}
-                for cat in categories
-            ]
+            "currencies": ["KZT", "USD", "EUR", "RUB"],
+            "categories": category_names
         }
 
 

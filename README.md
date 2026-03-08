@@ -20,6 +20,24 @@ docker compose up -d
 
 Приложение будет доступно на http://localhost:8199
 
+## Миграции базы данных
+
+Используется Alembic для миграций:
+
+```bash
+# Применить все миграции
+alembic upgrade head
+
+# Создать новую миграцию (автогенерация)
+alembic revision --autogenerate -m "описание"
+
+# Откатить миграцию
+alembic downgrade -1
+
+# Посмотреть текущую версию
+alembic current
+```
+
 ## Структура
 
 ```
@@ -53,14 +71,26 @@ zibzibzib_projects/
 
 Единая SQLite база с таблицами:
 
+**Общие:**
 - `users` — пользователи системы
 - `services` — зарегистрированные сервисы (модули)
 - `user_service_access` — матрица доступа пользователей к сервисам
+
+**Финансы:**
 - `finance_accounts` — аккаунты для финансов (семьи)
-- `transactions` — финансовые транзакции
+- `finance_events` — события (ежедневные траты, поездки и т.д.)
+- `finance_event_members` — участники событий
+- `transactions` — финансовые транзакции (с мультивалютой)
 - `finance_categories` — категории расходов
+- `category_tags` — теги для группировки категорий
+- `category_budgets` — месячные бюджеты по категориям
+- `recurring_transactions` — шаблоны повторяющихся транзакций
+- `exchange_rates` — кэш курсов валют
+
+**Погода/IoT:**
 - `devices` — IoT устройства
 - `measurements` — показания датчиков
+- `weather_display_settings` — настройки отображения
 
 ## Администрирование
 
@@ -74,14 +104,42 @@ zibzibzib_projects/
 
 ## iOS Shortcut для Finance
 
-1. В приложении перейти в Finance → Настройки
+### Получение webhook токена
+
+1. В приложении: Finance → События → выбрать событие → Настройки
 2. Скопировать Webhook URL
-3. Создать Shortcut:
-   - Get Contents of URL (POST на webhook)
-   - Open URL (открыть /finance/add)
-4. Создать Automation:
-   - Trigger: уведомление от банка
-   - Action: запустить Shortcut
+
+### API Endpoints
+
+```
+POST /finance/api/webhook/{token}
+  Body: {"amount": -1500, "category": "Продукты", "description": "...", "currency": "KZT"}
+  Response: {"status": "ok", "transaction_id": 123, ...}
+
+GET /finance/api/webhook/{token}/categories
+  Response: {"categories": [{"name": "Продукты", "icon": "🛒"}, ...]}
+```
+
+### Создание Shortcut (упрощенный вариант)
+
+1. **Запросить ввод** (Число) → "Сумма расхода" → сохранить в `сумма`
+2. **Список** → ваши категории → **Выбрать из списка** → сохранить в `категория`
+3. **Запросить ввод** (Текст) → "Описание" → сохранить в `описание`
+4. **Получить содержимое URL**:
+   - URL: `https://ваш-домен/finance/api/webhook/ВАШ_ТОКЕН`
+   - Метод: POST
+   - Тело (JSON): `{"amount": -(сумма), "category": "(категория)", "description": "(описание)"}`
+5. **Показать уведомление** → "Расход добавлен"
+
+### С динамическими категориями
+
+Добавить в начало:
+1. **Получить содержимое URL** → GET .../categories
+2. **Получить значение словаря** → ключ `categories`
+3. **Выбрать из списка**
+4. **Получить значение словаря** → ключ `name`
+
+Подробная инструкция: см. `.cursor/plans/ios_shortcut_form_*.plan.md`
 
 ## Nginx (пример)
 
