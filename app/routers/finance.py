@@ -99,7 +99,42 @@ async def webhook_notification(webhook_token: str, data: WebhookData = None):
             "status": "ok",
             "transaction_id": transaction.id,
             "event_id": event_fresh.id,
+            "amount": float(amount),
+            "currency": currency,
+            "amount_usd": float(amount_usd),
+            "category": data.category if data else None,
             "edit_url": f"/finance/add?event={event_fresh.id}&edit={transaction.id}",
+        }
+
+
+@router.get("/api/webhook/{webhook_token}/categories")
+async def webhook_get_categories(webhook_token: str):
+    """Get categories for iOS Shortcut picker (no auth, token-based)"""
+    event = await get_finance_event_by_webhook(webhook_token)
+    if not event:
+        raise HTTPException(status_code=404, detail="Invalid webhook token")
+
+    async with async_session() as session:
+        event_result = await session.execute(
+            select(FinanceEvent).where(FinanceEvent.id == event.id)
+        )
+        event_fresh = event_result.scalar_one()
+        
+        result = await session.execute(
+            select(Category.name, Category.icon)
+            .where(Category.account_id == event_fresh.account_id)
+            .order_by(desc(Category.usage_count))
+            .limit(20)
+        )
+        categories = result.all()
+        
+        return {
+            "event_name": event_fresh.name,
+            "default_currency": event_fresh.default_currency,
+            "categories": [
+                {"name": cat.name, "icon": cat.icon or ""}
+                for cat in categories
+            ]
         }
 
 
