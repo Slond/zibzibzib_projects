@@ -87,7 +87,13 @@ async def webhook_notification(webhook_token: str, data: WebhookData = None):
         else:
             amount = raw_amount
         
-        currency = data.currency if data and data.currency else event_fresh.default_currency
+        # Normalize inputs
+        currency = (data.currency.upper().strip() if data and data.currency 
+                    else event_fresh.default_currency)
+        category = (data.category.strip().capitalize() if data and data.category 
+                    else None)
+        description = (data.description.strip().capitalize() if data and data.description 
+                       else None)
         
         # Convert to USD
         amount_usd, exchange_rate = await convert_to_usd(amount, currency)
@@ -99,8 +105,8 @@ async def webhook_notification(webhook_token: str, data: WebhookData = None):
             currency=currency,
             amount_usd=amount_usd,
             exchange_rate=exchange_rate,
-            category=data.category if data else None,
-            description=data.description if data else None,
+            category=category,
+            description=description,
             timestamp=utcnow(),
             source="shortcut",
         )
@@ -116,7 +122,8 @@ async def webhook_notification(webhook_token: str, data: WebhookData = None):
             "amount": float(amount),
             "currency": currency,
             "amount_usd": float(amount_usd),
-            "category": data.category if data else None,
+            "category": category,
+            "description": description,
             "edit_url": f"/finance/add?event={event_fresh.id}&edit={transaction.id}",
         }
 
