@@ -104,6 +104,8 @@ zibzibzib_projects/
 
 ## iOS Shortcut для Finance
 
+[Example](https://www.icloud.com/shortcuts/773c5b9e124b4221a1758515440ba7ee)
+
 ### Получение webhook токена
 
 1. В приложении: Finance → События → выбрать событие → Настройки
