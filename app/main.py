@@ -22,7 +22,7 @@ from app.auth import (
     ensure_admin_exists,
     SESSION_COOKIE,
 )
-from app.services.scheduler import poll_yandex_devices, process_recurring_transactions
+from app.services.scheduler import poll_yandex_devices, process_recurring_transactions, poll_iqair_sensors
 from app.routers import dashboard, finance, weather
 
 logging.basicConfig(
@@ -64,6 +64,17 @@ async def lifespan(app: FastAPI):
         id="process_recurring",
         replace_existing=True,
     )
+    
+    # IQAir sensors - poll every 10 minutes
+    scheduler.add_job(
+        poll_iqair_sensors,
+        "interval",
+        seconds=600,
+        id="poll_iqair",
+        replace_existing=True,
+    )
+    await poll_iqair_sensors()
+    
     scheduler.start()
     logger.info("Scheduler started")
 

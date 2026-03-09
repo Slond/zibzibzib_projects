@@ -92,6 +92,110 @@
     padding: 60px 20px;
     color: rgba(255,255,255,0.4);
 }
+.section-title {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 32px 0 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+.iqair-form {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+}
+.iqair-form input[type="url"],
+.iqair-form input[type="text"] {
+    flex: 1;
+    min-width: 200px;
+    padding: 12px 14px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px;
+    color: #fff;
+    font-size: 14px;
+}
+.iqair-form input:focus {
+    outline: none;
+    border-color: #4361ee;
+}
+.checkbox-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px;
+}
+.checkbox-group input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+}
+.checkbox-group label {
+    font-size: 13px;
+    color: rgba(255,255,255,0.7);
+}
+.iqair-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.iqair-table th,
+.iqair-table td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.iqair-table th {
+    color: rgba(255,255,255,0.5);
+    font-weight: 500;
+    font-size: 12px;
+}
+.iqair-url {
+    font-size: 11px;
+    color: rgba(255,255,255,0.4);
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.iqair-url a {
+    color: #4361ee;
+}
+.status-active { color: #4ade80; }
+.status-inactive { color: rgba(255,255,255,0.4); }
+.badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    background: rgba(67,97,238,0.2);
+    color: #4361ee;
+}
+.actions-row {
+    display: flex;
+    gap: 8px;
+}
+.btn-small {
+    padding: 6px 12px;
+    font-size: 12px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+.btn-small:hover { opacity: 0.8; }
+.btn-outline {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.2);
+    color: rgba(255,255,255,0.7);
+}
+.btn-danger {
+    background: rgba(239,68,68,0.2);
+    color: #f87171;
+}
+.btn-success {
+    background: rgba(74,222,128,0.2);
+    color: #4ade80;
+}
 {% endblock %}
 
 {% block body %}
@@ -139,6 +243,80 @@
         <p>Нет устройств</p>
         <p style="font-size:12px;margin-top:8px;">Дождитесь первого опроса Yandex Smart Home</p>
     </div>
+    {% endif %}
+    
+    <!-- IQAir Section -->
+    <h2 class="section-title">🌍 IQAir датчики</h2>
+    
+    <form action="/weather/iqair/add" method="POST" class="iqair-form">
+        <input type="url" name="url" placeholder="https://www.iqair.com/kazakhstan/almaty-oblysy/almaty/samal-1" required>
+        <input type="text" name="name" placeholder="Название (авто)" style="flex: 0.5; min-width: 150px;">
+        <div class="checkbox-group">
+            <input type="checkbox" id="track_pm25" name="track_pm25" value="true" checked>
+            <label for="track_pm25">PM2.5</label>
+        </div>
+        <div class="checkbox-group">
+            <input type="checkbox" id="track_pm10" name="track_pm10" value="true" checked>
+            <label for="track_pm10">PM10</label>
+        </div>
+        <button type="submit" class="btn">Добавить</button>
+    </form>
+    
+    {% if iqair_sensors %}
+    <table class="iqair-table">
+        <thead>
+            <tr>
+                <th>Название</th>
+                <th>URL</th>
+                <th>Параметры</th>
+                <th>Статус</th>
+                <th>Последний опрос</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in iqair_sensors %}
+            <tr>
+                <td>{{ s.name }}</td>
+                <td class="iqair-url"><a href="{{ s.url }}" target="_blank">{{ s.url }}</a></td>
+                <td>
+                    {% if s.track_pm25 %}<span class="badge">PM2.5</span>{% endif %}
+                    {% if s.track_pm10 %}<span class="badge">PM10</span>{% endif %}
+                </td>
+                <td>
+                    {% if s.is_active %}
+                    <span class="status-active">● Активен</span>
+                    {% else %}
+                    <span class="status-inactive">○ Выключен</span>
+                    {% endif %}
+                </td>
+                <td style="font-size: 12px; color: rgba(255,255,255,0.5);">
+                    {{ s.last_poll.strftime('%d.%m %H:%M') if s.last_poll else '—' }}
+                </td>
+                <td class="actions-row">
+                    <form action="/weather/iqair/{{ s.id }}/toggle" method="POST" style="display:inline;">
+                        <button type="submit" class="btn-small {% if s.is_active %}btn-outline{% else %}btn-success{% endif %}">
+                            {{ 'Выкл' if s.is_active else 'Вкл' }}
+                        </button>
+                    </form>
+                    <form action="/weather/iqair/{{ s.id }}/delete" method="POST" style="display:inline;" onsubmit="return confirm('Удалить датчик?')">
+                        <button type="submit" class="btn-small btn-danger">Удалить</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    
+    <div style="margin-top: 16px;">
+        <form action="/weather/iqair/poll" method="POST" style="display:inline;">
+            <button type="submit" class="btn" style="background: rgba(255,255,255,0.1);">🔄 Опросить сейчас</button>
+        </form>
+    </div>
+    {% else %}
+    <p style="color:rgba(255,255,255,0.4);font-size:14px;">
+        Нет добавленных IQAir датчиков. Вставьте URL станции для начала сбора данных.
+    </p>
     {% endif %}
 </div>
 {% endblock %}

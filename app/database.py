@@ -315,6 +315,20 @@ class WeatherDisplaySetting(Base):
     )
 
 
+class IQAirSensor(Base):
+    """IQAir external air quality sensor"""
+    __tablename__ = "iqair_sensors"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    url = Column(String, nullable=False, unique=True)
+    name = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True)
+    track_pm25 = Column(Boolean, default=True)
+    track_pm10 = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=utcnow)
+    last_poll = Column(DateTime, nullable=True)
+
+
 # ============================================
 # Database initialization
 # ============================================

@@ -12,8 +12,10 @@ from app.database import (
     Transaction,
     FinanceEvent,
     Category,
+    IQAirSensor,
 )
 from app.services.yandex_client import YandexSmartHomeClient
+from app.services.iqair_client import IQAirClient
 
 logger = logging.getLogger(__name__)
 
@@ -164,3 +166,87 @@ async def process_recurring_transactions():
             
     except Exception as e:
         logger.error(f"Recurring transactions processing failed: {e}", exc_info=True)
+
+
+async def poll_iqair_sensors():
+    """Poll all active IQAir sensors for air quality data."""
+    logger.info("Starting IQAir sensors poll...")
+    
+    client = IQAirClient()
+    
+    try:
+        async with async_session() as session:
+            result = await session.execute(
+                select(IQAirSensor).where(IQAirSensor.is_active == True)
+            )
+            sensors = result.scalars().all()
+            
+            if not sensors:
+                logger.info("No active IQAir sensors configured")
+                return
+            
+            logger.info(f"Polling {len(sensors)} IQAir sensors")
+            
+            for sensor in sensors:
+                try:
+                    data = await client.fetch_station_data(sensor.url)
+                    
+                    if not data:
+                        logger.warning(f"No data from IQAir sensor: {sensor.name}")
+                        continue
+                    
+                    device_id = f"iqair_{sensor.id}"
+                    now = datetime.now(tz=timezone.utc)
+                    
+                    # Upsert device
+                    stmt = sqlite_insert(Device).values(
+                        device_id=device_id,
+                        name=sensor.name,
+                        device_type="iqair",
+                        room="IQAir",
+                        updated_at=now,
+                    )
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["device_id"],
+                        set_={
+                            "name": sensor.name,
+                            "updated_at": now,
+                        },
+                    )
+                    await session.execute(stmt)
+                    
+                    # Save PM2.5
+                    if sensor.track_pm25 and data.get("pm25") is not None:
+                        measurement = Measurement(
+                            device_id=device_id,
+                            property_instance="pm2.5_density",
+                            value=data["pm25"],
+                            unit="unit.density.mcg_m3",
+                            timestamp=now,
+                        )
+                        session.add(measurement)
+                        logger.debug(f"IQAir {sensor.name}: PM2.5 = {data['pm25']}")
+                    
+                    # Save PM10
+                    if sensor.track_pm10 and data.get("pm10") is not None:
+                        measurement = Measurement(
+                            device_id=device_id,
+                            property_instance="pm10_density",
+                            value=data["pm10"],
+                            unit="unit.density.mcg_m3",
+                            timestamp=now,
+                        )
+                        session.add(measurement)
+                        logger.debug(f"IQAir {sensor.name}: PM10 = {data['pm10']}")
+                    
+                    # Update last poll time
+                    sensor.last_poll = now
+                    
+                except Exception as e:
+                    logger.error(f"Error polling IQAir sensor {sensor.name}: {e}")
+            
+            await session.commit()
+            logger.info("IQAir poll completed successfully")
+    
+    except Exception as e:
+        logger.error(f"IQAir poll failed: {e}", exc_info=True)

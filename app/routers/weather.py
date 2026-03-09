@@ -9,8 +9,10 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select, func
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from app.database import async_session, Device, Measurement, WeatherDisplaySetting
+from app.database import async_session, Device, Measurement, WeatherDisplaySetting, IQAirSensor
 from app.auth import get_current_user, has_service_access
+from app.services.iqair_client import extract_station_name_from_url
+from app.services.scheduler import poll_iqair_sensors
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/weather")
@@ -70,6 +72,21 @@ async def weather_settings(request: Request):
             f"{s.device_id}|{s.property_instance}": s
             for s in settings_result.scalars().all()
         }
+        
+        # IQAir sensors
+        iqair_result = await session.execute(select(IQAirSensor).order_by(IQAirSensor.created_at.desc()))
+        iqair_sensors = [
+            {
+                "id": s.id,
+                "url": s.url,
+                "name": s.name,
+                "is_active": s.is_active,
+                "track_pm25": s.track_pm25,
+                "track_pm10": s.track_pm10,
+                "last_poll": s.last_poll,
+            }
+            for s in iqair_result.scalars().all()
+        ]
 
     devices_map = {d.device_id: d for d in devices}
 
@@ -98,6 +115,7 @@ async def weather_settings(request: Request):
             "request": request,
             "user": user,
             "devices_grouped": grouped,
+            "iqair_sensors": iqair_sensors,
         }
     )
 
@@ -128,6 +146,92 @@ async def toggle_display(
         await session.commit()
 
     return {"status": "ok"}
+
+
+# ============ IQAir Management ============
+
+@router.post("/iqair/add")
+async def add_iqair_sensor(
+    request: Request,
+    url: str = Form(...),
+    name: str = Form(None),
+    track_pm25: bool = Form(True),
+    track_pm10: bool = Form(True),
+):
+    """Add a new IQAir sensor"""
+    user = await require_weather_access(request)
+    if not user or not user.is_admin:
+        raise HTTPException(status_code=403)
+
+    url = url.strip()
+    if not url.startswith("http"):
+        url = "https://" + url
+    
+    if not name:
+        name = extract_station_name_from_url(url)
+    
+    try:
+        async with async_session() as session:
+            sensor = IQAirSensor(
+                url=url,
+                name=name,
+                track_pm25=track_pm25,
+                track_pm10=track_pm10,
+            )
+            session.add(sensor)
+            await session.commit()
+            logger.info(f"Added IQAir sensor: {name}")
+    except Exception as e:
+        logger.error(f"Failed to add IQAir sensor: {e}")
+
+    return RedirectResponse(url="/weather/settings", status_code=302)
+
+
+@router.post("/iqair/{sensor_id}/delete")
+async def delete_iqair_sensor(request: Request, sensor_id: int):
+    """Delete an IQAir sensor"""
+    user = await require_weather_access(request)
+    if not user or not user.is_admin:
+        raise HTTPException(status_code=403)
+
+    async with async_session() as session:
+        result = await session.execute(select(IQAirSensor).where(IQAirSensor.id == sensor_id))
+        sensor = result.scalar_one_or_none()
+        if sensor:
+            await session.delete(sensor)
+            await session.commit()
+            logger.info(f"Deleted IQAir sensor: {sensor.name}")
+
+    return RedirectResponse(url="/weather/settings", status_code=302)
+
+
+@router.post("/iqair/{sensor_id}/toggle")
+async def toggle_iqair_sensor(request: Request, sensor_id: int):
+    """Toggle IQAir sensor active state"""
+    user = await require_weather_access(request)
+    if not user or not user.is_admin:
+        raise HTTPException(status_code=403)
+
+    async with async_session() as session:
+        result = await session.execute(select(IQAirSensor).where(IQAirSensor.id == sensor_id))
+        sensor = result.scalar_one_or_none()
+        if sensor:
+            sensor.is_active = not sensor.is_active
+            await session.commit()
+            logger.info(f"Toggled IQAir sensor {sensor.name}: active={sensor.is_active}")
+
+    return RedirectResponse(url="/weather/settings", status_code=302)
+
+
+@router.post("/iqair/poll")
+async def poll_iqair_now(request: Request):
+    """Manually trigger IQAir polling"""
+    user = await require_weather_access(request)
+    if not user or not user.is_admin:
+        raise HTTPException(status_code=403)
+
+    await poll_iqair_sensors()
+    return RedirectResponse(url="/weather/settings", status_code=302)
 
 
 # ============ API Endpoints ============
