@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request, Form
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.database import async_session, User, Service, UserServiceAccess, FinanceAccount
 from app.auth import (
@@ -56,8 +57,22 @@ async def admin_page(request: Request):
         services_result = await session.execute(select(Service).order_by(Service.order))
         services = services_result.scalars().all()
 
-        accounts_result = await session.execute(select(FinanceAccount).order_by(FinanceAccount.name))
-        accounts = accounts_result.scalars().all()
+        accounts_result = await session.execute(
+            select(FinanceAccount)
+            .options(selectinload(FinanceAccount.events))
+            .order_by(FinanceAccount.name)
+        )
+        accounts_raw = accounts_result.scalars().all()
+
+        accounts = [
+            {
+                "id": acc.id,
+                "name": acc.name,
+                "events_count": len(acc.events),
+                "created_at": acc.created_at,
+            }
+            for acc in accounts_raw
+        ]
 
         access_result = await session.execute(select(UserServiceAccess))
         all_access = access_result.scalars().all()

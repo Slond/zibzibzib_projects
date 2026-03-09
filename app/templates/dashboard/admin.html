@@ -240,7 +240,7 @@ td { font-size: 14px; }
                 <tr>
                     <th>ID</th>
                     <th>Название</th>
-                    <th>Webhook Token</th>
+                    <th>События</th>
                     <th>Создан</th>
                 </tr>
             </thead>
@@ -249,10 +249,8 @@ td { font-size: 14px; }
                 <tr>
                     <td>{{ acc.id }}</td>
                     <td>{{ acc.name }}</td>
-                    <td style="font-family:monospace;font-size:11px;color:rgba(255,255,255,0.5);max-width:200px;overflow:hidden;text-overflow:ellipsis;">
-                        {{ acc.webhook_token[:25] }}...
-                    </td>
-                    <td>{{ acc.created_at.strftime('%d.%m.%Y') }}</td>
+                    <td>{{ acc.events_count }}</td>
+                    <td>{{ acc.created_at.strftime('%d.%m.%Y') if acc.created_at else '-' }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
