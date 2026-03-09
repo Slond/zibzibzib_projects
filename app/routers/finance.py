@@ -1252,13 +1252,13 @@ async def api_analytics_daily(
 
     if date_from and date_to:
         try:
-            since = datetime.strptime(date_from, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            until = datetime.strptime(date_to, "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
+            since = datetime.strptime(date_from, "%Y-%m-%d")
+            until = datetime.strptime(date_to, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
         except ValueError:
-            since = datetime.now(tz=timezone.utc) - timedelta(days=days)
+            since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
             until = None
     else:
-        since = datetime.now(tz=timezone.utc) - timedelta(days=days)
+        since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
         until = None
 
     async with async_session() as session:
@@ -1312,13 +1312,13 @@ async def api_analytics_by_category(
 
     if date_from and date_to:
         try:
-            since = datetime.strptime(date_from, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            until = datetime.strptime(date_to, "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
+            since = datetime.strptime(date_from, "%Y-%m-%d")
+            until = datetime.strptime(date_to, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
         except ValueError:
-            since = datetime.now(tz=timezone.utc) - timedelta(days=days)
+            since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
             until = None
     else:
-        since = datetime.now(tz=timezone.utc) - timedelta(days=days)
+        since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
         until = None
 
     async with async_session() as session:

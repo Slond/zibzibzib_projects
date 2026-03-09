@@ -232,6 +232,7 @@
 <a href="/finance/add{% if events|length == 1 %}?event={{ events[0].id }}{% endif %}" class="fab">+</a>
 
 <nav class="nav-bottom">
+<div class="nav-bottom-inner">
     <a href="/finance" class="nav-item active">
         <span class="nav-icon">📊</span>
         Обзор
@@ -248,6 +249,7 @@
         <span class="nav-icon">⚙️</span>
         События
     </a>
+</div>
 </nav>
 {% endblock %}
 
