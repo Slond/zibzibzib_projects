@@ -136,6 +136,11 @@
         <div class="empty-state">Загрузка...</div>
     </div>
 
+    <div class="selection-hint" id="selection-hint" style="display:none;margin-bottom:12px;padding:10px 16px;background:rgba(67,97,238,0.15);border-radius:8px;font-size:13px;color:rgba(255,255,255,0.7);">
+        <span id="hint-text"></span>
+        <button onclick="clearSelection()" style="margin-left:12px;padding:4px 10px;background:rgba(255,255,255,0.1);border:none;border-radius:4px;color:#fff;cursor:pointer;font-size:12px;">✕ Сбросить</button>
+    </div>
+
     <div class="chart-section">
         <div class="chart-header">
             <span class="chart-title">📈 История измерений</span>
@@ -146,13 +151,23 @@
                     <option value="24" selected>24 часа</option>
                     <option value="48">48 часов</option>
                     <option value="168">Неделя</option>
+                    <option value="336">2 недели</option>
+                    <option value="720">30 дней</option>
+                    <option value="custom">📅 Диапазон</option>
                 </select>
             </div>
+        </div>
+        <div class="date-range-row" id="date-range-row" style="display:none;margin-bottom:12px;gap:8px;align-items:center;">
+            <input type="date" id="date-from" style="padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.05);color:#fff;">
+            <span style="color:rgba(255,255,255,0.5);">—</span>
+            <input type="date" id="date-to" style="padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.05);color:#fff;">
+            <button onclick="applyDateRange()" style="padding:8px 16px;background:#4361ee;border:none;border-radius:6px;color:#fff;cursor:pointer;">Применить</button>
         </div>
         <div class="chart-container">
             <canvas id="main-chart"></canvas>
             <div class="chart-placeholder" id="chart-placeholder">
-                Выберите параметр на карточке выше
+                Выберите параметры на карточках выше<br>
+                <small style="color:rgba(255,255,255,0.4);">До 2 разных типов данных одновременно</small>
             </div>
         </div>
     </div>
@@ -204,7 +219,80 @@ const PROPERTY_COLORS = {
 
 let chart = null;
 let latestData = [];
-let selectedCard = null;
+let selectedCards = []; // Array of selected indices
+let customDateRange = null; // { from: 'YYYY-MM-DD', to: 'YYYY-MM-DD' }
+const MAX_CATEGORIES = 2; // Max different property types
+
+// Color palette for multiple lines
+const LINE_COLORS = [
+    '#ff6b6b', '#4ecdc4', '#ffe66d', '#a29bfe', '#fd79a8',
+    '#74b9ff', '#00b894', '#e17055', '#6c5ce7', '#fdcb6e'
+];
+
+function clearSelection() {
+    selectedCards = [];
+    renderStats();
+    updateSelectionHint();
+    if (chart) {
+        chart.destroy();
+        chart = null;
+    }
+    document.getElementById('chart-placeholder').style.display = 'block';
+}
+
+function updateSelectionHint() {
+    const hint = document.getElementById('selection-hint');
+    const hintText = document.getElementById('hint-text');
+    
+    if (selectedCards.length === 0) {
+        hint.style.display = 'none';
+        return;
+    }
+    
+    const categories = getSelectedCategories();
+    const catNames = Array.from(categories).map(c => PROPERTY_LABELS[c] || c);
+    
+    let text = `Выбрано: ${selectedCards.length} параметр(ов)`;
+    if (categories.size < MAX_CATEGORIES) {
+        text += ` · Можно добавить ещё ${MAX_CATEGORIES - categories.size} тип(а) данных`;
+    } else {
+        text += ` · Достигнут лимит типов (${catNames.join(' + ')})`;
+    }
+    
+    hintText.textContent = text;
+    hint.style.display = 'block';
+}
+
+function toggleCustomRange() {
+    const row = document.getElementById('date-range-row');
+    const select = document.getElementById('hours-select');
+    
+    if (select.value === 'custom') {
+        row.style.display = 'flex';
+        // Pre-fill with last 7 days
+        const today = new Date();
+        const weekAgo = new Date(today);
+        weekAgo.setDate(weekAgo.getDate() - 7);
+        
+        document.getElementById('date-to').value = today.toISOString().split('T')[0];
+        document.getElementById('date-from').value = weekAgo.toISOString().split('T')[0];
+    } else {
+        row.style.display = 'none';
+        customDateRange = null;
+    }
+}
+
+function applyDateRange() {
+    const from = document.getElementById('date-from').value;
+    const to = document.getElementById('date-to').value;
+    
+    if (from && to) {
+        customDateRange = { from, to };
+        if (selectedCards.length > 0) {
+            updateChart();
+        }
+    }
+}
 
 function getTimezoneOffset() {
     return parseInt(localStorage.getItem('tz_offset') || '5');
@@ -274,7 +362,7 @@ function initTimezoneSelect() {
     select.addEventListener('change', (e) => {
         setTimezoneOffset(parseInt(e.target.value));
         renderStats();
-        if (selectedCard) updateChart();
+        if (selectedCards.length > 0) updateChart();
     });
 }
 
@@ -287,6 +375,33 @@ async function loadData() {
     } catch (e) {
         console.error('Load failed:', e);
     }
+}
+
+function getSelectedCategories() {
+    const categories = new Set();
+    for (const idx of selectedCards) {
+        if (latestData[idx]) {
+            categories.add(latestData[idx].property);
+        }
+    }
+    return categories;
+}
+
+function canSelectCard(idx) {
+    if (selectedCards.includes(idx)) return true; // Can always deselect
+    
+    const item = latestData[idx];
+    if (!item) return false;
+    
+    const currentCategories = getSelectedCategories();
+    
+    // If same category as already selected - always allow
+    if (currentCategories.has(item.property)) return true;
+    
+    // If we have less than MAX_CATEGORIES different types - allow
+    if (currentCategories.size < MAX_CATEGORIES) return true;
+    
+    return false;
 }
 
 function renderStats() {
@@ -308,18 +423,24 @@ function renderStats() {
         return;
     }
 
+    const currentCategories = getSelectedCategories();
+
     container.innerHTML = latestData.map((item, idx) => {
         const icon = PROPERTY_ICONS[item.property] || '📊';
         const label = PROPERTY_LABELS[item.property] || item.property;
         const colorClass = getPropertyClass(item.property);
-        const isSelected = selectedCard === idx;
+        const isSelected = selectedCards.includes(idx);
+        const canSelect = canSelectCard(idx);
+        const isDisabled = !canSelect && !isSelected;
         
         return `
-            <div class="stat-card ${isSelected ? 'selected' : ''}" onclick="selectCard(${idx})">
+            <div class="stat-card ${isSelected ? 'selected' : ''} ${isDisabled ? 'disabled' : ''}" 
+                 onclick="${isDisabled ? '' : `selectCard(${idx})`}"
+                 style="${isDisabled ? 'opacity:0.4;cursor:not-allowed;' : ''}">
                 <div class="stat-icon">${icon}</div>
                 <div class="stat-value ${colorClass}">
                     ${typeof item.value === 'number' ? item.value.toFixed(1) : item.value}
-                    <span style="font-size:14px;color:rgba(255,255,255,0.5);">${formatUnit(item.unit)}</span>
+                    <span style="font-size:12px;color:rgba(255,255,255,0.5);white-space:nowrap;">${formatUnit(item.unit)}</span>
                 </div>
                 <div class="stat-label">${label}</div>
                 <div class="stat-device">${item.device_name}</div>
@@ -337,28 +458,133 @@ function renderStats() {
 }
 
 async function selectCard(idx) {
-    selectedCard = idx;
+    const pos = selectedCards.indexOf(idx);
+    if (pos >= 0) {
+        // Deselect
+        selectedCards.splice(pos, 1);
+    } else {
+        // Select
+        if (canSelectCard(idx)) {
+            selectedCards.push(idx);
+        }
+    }
     renderStats();
+    updateSelectionHint();
     await updateChart();
 }
 
 async function updateChart() {
-    if (selectedCard === null || !latestData[selectedCard]) {
+    if (selectedCards.length === 0) {
         document.getElementById('chart-placeholder').style.display = 'block';
+        if (chart) {
+            chart.destroy();
+            chart = null;
+        }
         return;
     }
     
     document.getElementById('chart-placeholder').style.display = 'none';
     
-    const item = latestData[selectedCard];
-    const hours = parseInt(document.getElementById('hours-select').value);
+    const hoursValue = document.getElementById('hours-select').value;
+    const useCustomRange = hoursValue === 'custom' && customDateRange;
+    const hours = useCustomRange ? null : parseInt(hoursValue);
+    
+    // Group selected items by property type
+    const byCategory = {};
+    for (const idx of selectedCards) {
+        const item = latestData[idx];
+        if (!item) continue;
+        if (!byCategory[item.property]) {
+            byCategory[item.property] = [];
+        }
+        byCategory[item.property].push({ idx, item });
+    }
+    
+    const categories = Object.keys(byCategory);
+    const datasets = [];
+    const scales = {
+        x: {
+            type: 'time',
+            time: { displayFormats: { hour: 'HH:mm', day: 'dd.MM' } },
+            grid: { color: 'rgba(255,255,255,0.05)' },
+            ticks: {
+                color: 'rgba(255,255,255,0.4)',
+                callback: function(value) {
+                    const d = new Date(value);
+                    const pad = n => n.toString().padStart(2, '0');
+                    return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+                }
+            }
+        }
+    };
+    
+    let colorIdx = 0;
     
     try {
-        const resp = await fetch(
-            `/weather/api/measurements?device_id=${encodeURIComponent(item.device_id)}&property_instance=${encodeURIComponent(item.property)}&hours=${hours}`
-        );
-        if (!resp.ok) throw new Error('Failed');
-        const measurements = await resp.json();
+        for (let catIdx = 0; catIdx < categories.length; catIdx++) {
+            const category = categories[catIdx];
+            const items = byCategory[category];
+            const yAxisID = catIdx === 0 ? 'y' : 'y1';
+            const label = PROPERTY_LABELS[category] || category;
+            const unit = items[0]?.item.unit || '';
+            
+            // Configure Y axis
+            scales[yAxisID] = {
+                type: 'linear',
+                position: catIdx === 0 ? 'left' : 'right',
+                grid: { 
+                    color: catIdx === 0 ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.02)',
+                    drawOnChartArea: catIdx === 0,
+                },
+                ticks: { 
+                    color: 'rgba(255,255,255,0.4)',
+                },
+                title: {
+                    display: true,
+                    text: `${label} (${formatUnit(unit)})`,
+                    color: 'rgba(255,255,255,0.5)',
+                    font: { size: 11 }
+                }
+            };
+            
+            // Fetch data for each item in this category
+            for (const { idx, item } of items) {
+                let url = `/weather/api/measurements?device_id=${encodeURIComponent(item.device_id)}&property_instance=${encodeURIComponent(item.property)}`;
+                if (useCustomRange) {
+                    url += `&date_from=${customDateRange.from}&date_to=${customDateRange.to}`;
+                } else {
+                    url += `&hours=${hours}`;
+                }
+                const resp = await fetch(url);
+                if (!resp.ok) continue;
+                const measurements = await resp.json();
+                
+                const chartData = measurements.map(m => ({
+                    x: applyTz(m.timestamp).getTime(),
+                    y: m.value,
+                }));
+                
+                const color = LINE_COLORS[colorIdx % LINE_COLORS.length];
+                colorIdx++;
+                
+                const datasetLabel = items.length > 1 || categories.length > 1
+                    ? `${label} (${item.device_name})`
+                    : label;
+                
+                datasets.push({
+                    label: datasetLabel,
+                    data: chartData,
+                    borderColor: color,
+                    backgroundColor: color + '20',
+                    fill: false,
+                    tension: 0.3,
+                    pointRadius: 1,
+                    pointHoverRadius: 5,
+                    yAxisID: yAxisID,
+                    borderWidth: 2,
+                });
+            }
+        }
         
         const ctx = document.getElementById('main-chart').getContext('2d');
         
@@ -366,33 +592,29 @@ async function updateChart() {
             chart.destroy();
         }
         
-        const color = PROPERTY_COLORS[item.property] || '#4361ee';
-        const label = PROPERTY_LABELS[item.property] || item.property;
-        
-        const chartData = measurements.map(m => ({
-            x: applyTz(m.timestamp).getTime(),
-            y: m.value,
-        }));
+        const showLegend = datasets.length > 1;
         
         chart = new Chart(ctx, {
             type: 'line',
-            data: {
-                datasets: [{
-                    label: label,
-                    data: chartData,
-                    borderColor: color,
-                    backgroundColor: color + '20',
-                    fill: true,
-                    tension: 0.3,
-                    pointRadius: 1,
-                    pointHoverRadius: 5,
-                }]
-            },
+            data: { datasets },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false,
+                },
                 plugins: {
-                    legend: { display: false },
+                    legend: { 
+                        display: showLegend,
+                        position: 'top',
+                        labels: {
+                            color: 'rgba(255,255,255,0.7)',
+                            boxWidth: 12,
+                            padding: 10,
+                            font: { size: 11 }
+                        }
+                    },
                     tooltip: {
                         callbacks: {
                             title: function(context) {
@@ -400,32 +622,11 @@ async function updateChart() {
                                 const d = new Date(ms);
                                 const pad = n => n.toString().padStart(2, '0');
                                 return `${pad(d.getUTCDate())}.${pad(d.getUTCMonth()+1)} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
-                            },
-                            label: function(context) {
-                                return `${label}: ${context.parsed.y.toFixed(1)} ${formatUnit(item.unit)}`;
                             }
                         }
                     }
                 },
-                scales: {
-                    x: {
-                        type: 'time',
-                        time: { displayFormats: { hour: 'HH:mm', day: 'dd.MM' } },
-                        grid: { color: 'rgba(255,255,255,0.05)' },
-                        ticks: {
-                            color: 'rgba(255,255,255,0.4)',
-                            callback: function(value) {
-                                const d = new Date(value);
-                                const pad = n => n.toString().padStart(2, '0');
-                                return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
-                            }
-                        }
-                    },
-                    y: {
-                        grid: { color: 'rgba(255,255,255,0.05)' },
-                        ticks: { color: 'rgba(255,255,255,0.4)' }
-                    }
-                }
+                scales: scales
             }
         });
     } catch (e) {
@@ -434,7 +635,10 @@ async function updateChart() {
 }
 
 document.getElementById('hours-select').addEventListener('change', () => {
-    if (selectedCard !== null) updateChart();
+    toggleCustomRange();
+    if (selectedCards.length > 0 && document.getElementById('hours-select').value !== 'custom') {
+        updateChart();
+    }
 });
 
 initTimezoneSelect();

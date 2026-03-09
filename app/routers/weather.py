@@ -294,12 +294,25 @@ async def get_measurements(
     device_id: str = Query(..., description="Device ID"),
     property_instance: str = Query(..., description="Property instance"),
     hours: int = Query(24, description="Hours of history"),
+    date_from: str = Query(None, description="Start date (YYYY-MM-DD)"),
+    date_to: str = Query(None, description="End date (YYYY-MM-DD)"),
 ):
     user = await require_weather_access(request)
     if not user:
         raise HTTPException(status_code=401)
 
-    since = datetime.now(tz=timezone.utc) - timedelta(hours=hours)
+    # Determine time range
+    if date_from and date_to:
+        try:
+            since = datetime.strptime(date_from, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            until = datetime.strptime(date_to, "%Y-%m-%d").replace(
+                hour=23, minute=59, second=59, tzinfo=timezone.utc
+            )
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format")
+    else:
+        since = datetime.now(tz=timezone.utc) - timedelta(hours=hours)
+        until = datetime.now(tz=timezone.utc)
 
     async with async_session() as session:
         result = await session.execute(
@@ -308,6 +321,7 @@ async def get_measurements(
                 Measurement.device_id == device_id,
                 Measurement.property_instance == property_instance,
                 Measurement.timestamp >= since,
+                Measurement.timestamp <= until,
             )
             .order_by(Measurement.timestamp)
         )
