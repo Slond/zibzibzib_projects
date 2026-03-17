@@ -95,24 +95,44 @@
         </div>
     </div>
 
+    <!-- Quick Setup -->
+    <div class="card" style="background:linear-gradient(135deg, rgba(67,97,238,0.15) 0%, rgba(114,9,183,0.15) 100%);border:1px solid rgba(67,97,238,0.3);">
+        <h3 style="margin-bottom:12px;font-size:16px;">⚡ Быстрая настройка iOS Shortcuts</h3>
+        <p style="color:rgba(255,255,255,0.7);font-size:13px;line-height:1.6;margin-bottom:16px;">
+            Установите готовый шаблон команды и замените в нём Webhook URL на ваш (скопируйте выше).
+        </p>
+        <a href="https://www.icloud.com/shortcuts/773c5b9e124b4221a1758515440ba7ee" 
+           target="_blank" 
+           class="btn" 
+           style="display:inline-flex;align-items:center;gap:8px;text-decoration:none;">
+            <span style="font-size:18px;">📲</span> Установить шаблон Shortcut
+        </a>
+        <p style="color:rgba(255,255,255,0.4);font-size:11px;margin-top:12px;">
+            После установки: откройте команду → найдите блок URL → замените на ваш Webhook URL
+        </p>
+    </div>
+
     <!-- Shortcuts Instructions -->
     <div class="card">
-        <h3 style="margin-bottom:16px;font-size:16px;">📱 Инструкция iOS Shortcuts</h3>
-        <ol style="color:rgba(255,255,255,0.7);font-size:13px;line-height:1.8;padding-left:20px;">
-            <li>Откройте <strong>Shortcuts</strong></li>
-            <li>Создайте новый Shortcut (+)</li>
-            <li>Добавьте <strong>"URL"</strong> → вставьте Webhook URL</li>
-            <li>Добавьте <strong>"Get Contents of URL"</strong>:
-                <ul style="margin:8px 0;padding-left:16px;">
-                    <li>URL: переменная URL из шага 3</li>
-                    <li>Method: <strong>POST</strong></li>
-                </ul>
-            </li>
-            <li>Добавьте <strong>"URL"</strong> → <code>{{ request.url.scheme }}://{{ request.url.netloc }}/finance/add?event={{ event.id }}</code></li>
-            <li>Добавьте <strong>"Open URL"</strong> → переменная URL из шага 5</li>
-            <li>Сохраните Shortcut</li>
-            <li>В <strong>Automation</strong> → добавьте триггер на уведомление от банка</li>
-        </ol>
+        <h3 style="margin-bottom:16px;font-size:16px;">📱 Ручная настройка (альтернатива)</h3>
+        <details style="color:rgba(255,255,255,0.7);font-size:13px;">
+            <summary style="cursor:pointer;color:rgba(255,255,255,0.5);margin-bottom:12px;">Показать инструкцию</summary>
+            <ol style="line-height:1.8;padding-left:20px;margin-top:12px;">
+                <li>Откройте <strong>Shortcuts</strong></li>
+                <li>Создайте новый Shortcut (+)</li>
+                <li>Добавьте <strong>"URL"</strong> → вставьте Webhook URL</li>
+                <li>Добавьте <strong>"Get Contents of URL"</strong>:
+                    <ul style="margin:8px 0;padding-left:16px;">
+                        <li>URL: переменная URL из шага 3</li>
+                        <li>Method: <strong>POST</strong></li>
+                    </ul>
+                </li>
+                <li>Добавьте <strong>"URL"</strong> → <code>{{ request.url.scheme }}://{{ request.url.netloc }}/finance/add?event={{ event.id }}</code></li>
+                <li>Добавьте <strong>"Open URL"</strong> → переменная URL из шага 5</li>
+                <li>Сохраните Shortcut</li>
+                <li>В <strong>Automation</strong> → добавьте триггер на уведомление от банка</li>
+            </ol>
+        </details>
     </div>
 
     {% if event.event_type == 'shared' %}

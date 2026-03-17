@@ -208,7 +208,12 @@ td { font-size: 14px; }
                         </span>
                     </td>
                     <td class="actions">
-                        <button type="button" class="btn small" onclick="openEditUser({{ u.id }}, '{{ u.name|e if u.name else '' }}', {{ u.finance_account_id or 'null' }}, {{ 'true' if u.is_admin else 'false' }})">Изменить</button>
+                        <button type="button" class="btn small" 
+                            data-user-id="{{ u.id }}"
+                            data-user-name="{{ u.name or '' }}"
+                            data-account-id="{{ u.finance_account_id or '' }}"
+                            data-is-admin="{{ 'true' if u.is_admin else 'false' }}"
+                            onclick="openEditUserFromBtn(this)">Изменить</button>
                         <form method="POST" action="/admin/users/{{ u.id }}/reset-password" style="display:inline;">
                             <button type="submit" class="btn small secondary" onclick="return confirm('Сбросить пароль?')">Сброс</button>
                         </form>
@@ -433,24 +438,42 @@ function hideGrantModal() {
     document.getElementById('grant-modal').classList.remove('show');
 }
 
-document.getElementById('grant-modal').addEventListener('click', function(e) {
-    if (e.target === this) hideGrantModal();
-});
+var grantModal = document.getElementById('grant-modal');
+if (grantModal) {
+    grantModal.addEventListener('click', function(e) {
+        if (e.target === this) hideGrantModal();
+    });
+}
 
-function openEditUser(userId, name, accountId, isAdmin) {
-    document.getElementById('edit-user-form').action = '/admin/users/' + userId + '/edit';
-    document.getElementById('edit-user-name').value = name || '';
-    document.getElementById('edit-user-account').value = accountId || '';
-    document.getElementById('edit-user-admin').checked = isAdmin;
-    document.getElementById('edit-user-modal').classList.add('show');
+function openEditUserFromBtn(btn) {
+    var userId = btn.dataset.userId;
+    var name = btn.dataset.userName;
+    var accountId = btn.dataset.accountId;
+    var isAdmin = btn.dataset.isAdmin === 'true';
+    
+    var form = document.getElementById('edit-user-form');
+    var nameInput = document.getElementById('edit-user-name');
+    var accountSelect = document.getElementById('edit-user-account');
+    var adminCheckbox = document.getElementById('edit-user-admin');
+    var modal = document.getElementById('edit-user-modal');
+    
+    if (form) form.action = '/admin/users/' + userId + '/edit';
+    if (nameInput) nameInput.value = name || '';
+    if (accountSelect) accountSelect.value = accountId || '';
+    if (adminCheckbox) adminCheckbox.checked = isAdmin;
+    if (modal) modal.classList.add('show');
 }
 
 function hideEditUserModal() {
-    document.getElementById('edit-user-modal').classList.remove('show');
+    var modal = document.getElementById('edit-user-modal');
+    if (modal) modal.classList.remove('show');
 }
 
-document.getElementById('edit-user-modal').addEventListener('click', function(e) {
-    if (e.target === this) hideEditUserModal();
-});
+var editModal = document.getElementById('edit-user-modal');
+if (editModal) {
+    editModal.addEventListener('click', function(e) {
+        if (e.target === this) hideEditUserModal();
+    });
+}
 </script>
 {% endblock %}
