@@ -263,3 +263,106 @@ async def admin_revoke_access(
 
     await revoke_service_access(user_id, service_id)
     return RedirectResponse(url="/admin", status_code=302)
+
+
+# ============================================
+# User Profile
+# ============================================
+
+@router.get("/profile")
+async def profile_page(request: Request, success: str = None, error: str = None):
+    """User profile page"""
+    user = await get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    return templates.TemplateResponse(
+        "dashboard/profile.html",
+        {"request": request, "user": user, "success": success, "error": error}
+    )
+
+
+@router.post("/profile/update-name")
+async def profile_update_name(request: Request, name: str = Form(None)):
+    """Update user's name"""
+    user = await get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    async with async_session() as session:
+        result = await session.execute(select(User).where(User.id == user.id))
+        db_user = result.scalar_one_or_none()
+        if db_user:
+            db_user.name = name if name else None
+            await session.commit()
+
+    return RedirectResponse(url="/profile?success=Имя обновлено", status_code=302)
+
+
+@router.post("/profile/update-email")
+async def profile_update_email(
+    request: Request,
+    email: str = Form(...),
+    current_password: str = Form(...),
+):
+    """Update user's email"""
+    from app.auth import verify_password
+
+    user = await get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    async with async_session() as session:
+        result = await session.execute(select(User).where(User.id == user.id))
+        db_user = result.scalar_one_or_none()
+        if not db_user:
+            return RedirectResponse(url="/profile?error=Пользователь не найден", status_code=302)
+
+        if not verify_password(current_password, db_user.password_hash):
+            return RedirectResponse(url="/profile?error=Неверный пароль", status_code=302)
+
+        # Check if email is taken
+        existing = await session.execute(select(User).where(User.email == email, User.id != user.id))
+        if existing.scalar_one_or_none():
+            return RedirectResponse(url="/profile?error=Email уже используется", status_code=302)
+
+        db_user.email = email
+        await session.commit()
+
+    return RedirectResponse(url="/profile?success=Email обновлён", status_code=302)
+
+
+@router.post("/profile/update-password")
+async def profile_update_password(
+    request: Request,
+    current_password: str = Form(...),
+    new_password: str = Form(...),
+    confirm_password: str = Form(...),
+):
+    """Update user's password"""
+    from app.auth import verify_password
+
+    user = await get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    if new_password != confirm_password:
+        return RedirectResponse(url="/profile?error=Пароли не совпадают", status_code=302)
+
+    if len(new_password) < 6:
+        return RedirectResponse(url="/profile?error=Пароль слишком короткий (минимум 6 символов)", status_code=302)
+
+    async with async_session() as session:
+        result = await session.execute(select(User).where(User.id == user.id))
+        db_user = result.scalar_one_or_none()
+        if not db_user:
+            return RedirectResponse(url="/profile?error=Пользователь не найден", status_code=302)
+
+        if not verify_password(current_password, db_user.password_hash):
+            return RedirectResponse(url="/profile?error=Неверный текущий пароль", status_code=302)
+
+        db_user.password_hash = hash_password(new_password)
+        db_user.must_change_password = False
+        await session.commit()
+
+    return RedirectResponse(url="/profile?success=Пароль изменён", status_code=302)

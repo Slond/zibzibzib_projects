@@ -95,9 +95,9 @@
         <h1>🏠 Main Project</h1>
     </div>
     <div class="header-links">
-        <span style="background:rgba(255,255,255,0.1);padding:8px 14px;border-radius:8px;font-size:13px;">
-            {{ user.name or user.email }}
-        </span>
+        <a href="/profile" style="background:rgba(255,255,255,0.1);padding:8px 14px;border-radius:8px;font-size:13px;transition:background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.15)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">
+            👤 {{ user.name or user.email }}
+        </a>
         {% if user.is_admin %}
         <a href="/admin">Админка</a>
         {% endif %}
