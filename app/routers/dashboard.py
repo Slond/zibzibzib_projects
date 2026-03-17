@@ -149,6 +149,32 @@ async def admin_reset_password(request: Request, user_id: int):
     return RedirectResponse(url="/admin", status_code=302)
 
 
+@router.post("/admin/users/{user_id}/edit")
+async def admin_edit_user(
+    request: Request,
+    user_id: int,
+    name: str = Form(None),
+    finance_account_id: int = Form(None),
+    is_admin: bool = Form(False),
+):
+    user = await get_current_user(request)
+    if not user or not user.is_admin:
+        return RedirectResponse(url="/login", status_code=302)
+
+    async with async_session() as session:
+        result = await session.execute(select(User).where(User.id == user_id))
+        target_user = result.scalar_one_or_none()
+        if target_user:
+            target_user.name = name if name else None
+            target_user.finance_account_id = finance_account_id if finance_account_id else None
+            # Don't allow removing own admin status
+            if user_id != user.id:
+                target_user.is_admin = is_admin
+            await session.commit()
+
+    return RedirectResponse(url="/admin", status_code=302)
+
+
 @router.post("/admin/accounts/create")
 async def admin_create_account(request: Request, name: str = Form(...)):
     user = await get_current_user(request)

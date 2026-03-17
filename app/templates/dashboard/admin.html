@@ -208,6 +208,7 @@ td { font-size: 14px; }
                         </span>
                     </td>
                     <td class="actions">
+                        <button type="button" class="btn small" onclick="openEditUser({{ u.id }}, '{{ u.name|e if u.name else '' }}', {{ u.finance_account_id or 'null' }}, {{ 'true' if u.is_admin else 'false' }})">Изменить</button>
                         <form method="POST" action="/admin/users/{{ u.id }}/reset-password" style="display:inline;">
                             <button type="submit" class="btn small secondary" onclick="return confirm('Сбросить пароль?')">Сброс</button>
                         </form>
@@ -378,6 +379,36 @@ td { font-size: 14px; }
             <button type="submit" class="btn" style="width:100%;">Дать доступ</button>
         </form>
     </div>
+
+    <!-- Edit User Modal -->
+    <div class="modal" id="edit-user-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Редактировать пользователя</h3>
+                <button class="modal-close" onclick="hideEditUserModal()">&times;</button>
+            </div>
+            <form method="POST" id="edit-user-form">
+                <div class="form-group" style="margin-bottom:16px;">
+                    <label>Имя</label>
+                    <input type="text" name="name" id="edit-user-name" placeholder="Имя">
+                </div>
+                <div class="form-group" style="margin-bottom:16px;">
+                    <label>Finance аккаунт</label>
+                    <select name="finance_account_id" id="edit-user-account">
+                        <option value="">— Не назначен —</option>
+                        {% for acc in accounts %}
+                        <option value="{{ acc.id }}">{{ acc.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="checkbox-group" style="margin-bottom:20px;padding-top:0;">
+                    <input type="checkbox" name="is_admin" id="edit-user-admin" value="true">
+                    <label for="edit-user-admin" style="margin:0;font-size:13px;">Админ</label>
+                </div>
+                <button type="submit" class="btn" style="width:100%;">Сохранить</button>
+            </form>
+        </div>
+    </div>
 </div>
 {% endblock %}
 
@@ -404,6 +435,22 @@ function hideGrantModal() {
 
 document.getElementById('grant-modal').addEventListener('click', function(e) {
     if (e.target === this) hideGrantModal();
+});
+
+function openEditUser(userId, name, accountId, isAdmin) {
+    document.getElementById('edit-user-form').action = '/admin/users/' + userId + '/edit';
+    document.getElementById('edit-user-name').value = name || '';
+    document.getElementById('edit-user-account').value = accountId || '';
+    document.getElementById('edit-user-admin').checked = isAdmin;
+    document.getElementById('edit-user-modal').classList.add('show');
+}
+
+function hideEditUserModal() {
+    document.getElementById('edit-user-modal').classList.remove('show');
+}
+
+document.getElementById('edit-user-modal').addEventListener('click', function(e) {
+    if (e.target === this) hideEditUserModal();
 });
 </script>
 {% endblock %}

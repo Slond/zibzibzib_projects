@@ -141,8 +141,6 @@ GET /finance/api/webhook/{token}/categories
 3. **Выбрать из списка**
 4. **Получить значение словаря** → ключ `name`
 
-Подробная инструкция: см. `.cursor/plans/ios_shortcut_form_*.plan.md`
-
 ## Nginx (пример)
 
 ```nginx
