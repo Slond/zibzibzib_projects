@@ -519,6 +519,39 @@ async def delete_transaction(request: Request, transaction_id: int):
     return RedirectResponse(url="/finance/history", status_code=302)
 
 
+@router.post("/transactions/bulk-delete")
+async def bulk_delete_transactions(request: Request):
+    """Delete multiple transactions at once"""
+    user = await require_finance_access(request)
+    if not user or not user.finance_account_id:
+        return RedirectResponse(url="/login", status_code=302)
+
+    form_data = await request.form()
+    transaction_ids = form_data.getlist("transaction_ids")
+    
+    if not transaction_ids:
+        return RedirectResponse(url="/finance/history", status_code=302)
+
+    async with async_session() as session:
+        for tid in transaction_ids:
+            try:
+                tid_int = int(tid)
+                result = await session.execute(
+                    select(Transaction).where(
+                        Transaction.id == tid_int,
+                        Transaction.account_id == user.finance_account_id
+                    )
+                )
+                transaction = result.scalar_one_or_none()
+                if transaction:
+                    await session.delete(transaction)
+            except (ValueError, TypeError):
+                continue
+        await session.commit()
+
+    return RedirectResponse(url="/finance/history", status_code=302)
+
+
 @router.get("/settings")
 async def settings_page(request: Request):
     """Finance settings - redirect to events list"""
@@ -1252,13 +1285,15 @@ async def api_analytics_daily(
 
     if date_from and date_to:
         try:
-            since = datetime.strptime(date_from, "%Y-%m-%d")
-            until = datetime.strptime(date_to, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+            since = datetime.strptime(date_from, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            until = datetime.strptime(date_to, "%Y-%m-%d").replace(
+                hour=23, minute=59, second=59, tzinfo=timezone.utc
+            )
         except ValueError:
-            since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
+            since = datetime.now(tz=timezone.utc) - timedelta(days=days)
             until = None
     else:
-        since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
+        since = datetime.now(tz=timezone.utc) - timedelta(days=days)
         until = None
 
     async with async_session() as session:
@@ -1312,13 +1347,15 @@ async def api_analytics_by_category(
 
     if date_from and date_to:
         try:
-            since = datetime.strptime(date_from, "%Y-%m-%d")
-            until = datetime.strptime(date_to, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+            since = datetime.strptime(date_from, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            until = datetime.strptime(date_to, "%Y-%m-%d").replace(
+                hour=23, minute=59, second=59, tzinfo=timezone.utc
+            )
         except ValueError:
-            since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
+            since = datetime.now(tz=timezone.utc) - timedelta(days=days)
             until = None
     else:
-        since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
+        since = datetime.now(tz=timezone.utc) - timedelta(days=days)
         until = None
 
     async with async_session() as session:

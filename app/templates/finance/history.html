@@ -159,6 +159,83 @@
     margin: 0 auto;
     padding: 0 16px;
 }
+.select-mode-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 12px;
+    margin-bottom: 16px;
+    cursor: pointer;
+    font-size: 14px;
+    color: rgba(255,255,255,0.7);
+    transition: all 0.2s;
+}
+.select-mode-toggle:hover {
+    background: rgba(255,255,255,0.08);
+}
+.select-mode-toggle.active {
+    background: rgba(67, 97, 238, 0.2);
+    color: #fff;
+}
+.transaction-checkbox {
+    width: 20px;
+    height: 20px;
+    accent-color: #4361ee;
+    cursor: pointer;
+    flex-shrink: 0;
+    display: none;
+}
+.select-mode .transaction-checkbox {
+    display: block;
+}
+.select-mode .transaction-item {
+    cursor: pointer;
+}
+.bulk-actions {
+    position: fixed;
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: linear-gradient(135deg, #f87171 0%, #dc2626 100%);
+    padding: 14px 28px;
+    border-radius: 28px;
+    box-shadow: 0 10px 30px rgba(248, 113, 113, 0.4);
+    display: none;
+    align-items: center;
+    gap: 12px;
+    z-index: 100;
+}
+.bulk-actions.visible {
+    display: flex;
+}
+.bulk-actions button {
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.bulk-actions .count {
+    font-size: 13px;
+    opacity: 0.9;
+}
+.select-all-row {
+    display: none;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: rgba(67, 97, 238, 0.1);
+    border-radius: 12px;
+    margin-bottom: 12px;
+    font-size: 14px;
+    cursor: pointer;
+}
+.select-mode .select-all-row {
+    display: flex;
+}
 {% endblock %}
 
 {% block body %}
@@ -196,6 +273,16 @@
     </div>
 
     {% if transactions %}
+    <div class="select-mode-toggle" onclick="toggleSelectMode()">
+        <span id="select-mode-icon">☐</span>
+        <span id="select-mode-text">Выбрать для удаления</span>
+    </div>
+    
+    <form id="bulk-delete-form" method="POST" action="/finance/transactions/bulk-delete">
+    <div class="select-all-row" onclick="toggleSelectAll()">
+        <input type="checkbox" id="select-all-checkbox" class="transaction-checkbox" style="display:block;">
+        <span>Выбрать все на странице</span>
+    </div>
     <div class="transactions-list" id="transactions-list">
         {% set current_date = None %}
         {% for t in transactions %}
@@ -204,7 +291,8 @@
         {% set current_date = tx_date %}
         <div class="date-divider">{{ t.timestamp.strftime('%d %B') }}</div>
         {% endif %}
-        <a href="/finance/add?event={{ t.event_id or '' }}&edit={{ t.id }}" class="transaction-item">
+        <div class="transaction-item" data-id="{{ t.id }}" onclick="handleTransactionClick(event, {{ t.id }}, '{% if t.event_id %}event={{ t.event_id }}&{% endif %}edit={{ t.id }}')">
+            <input type="checkbox" name="transaction_ids" value="{{ t.id }}" class="transaction-checkbox" onclick="event.stopPropagation(); updateBulkActions();">
             <div class="transaction-info">
                 <span class="transaction-merchant">{{ t.description or t.category or 'Операция' }}</span>
                 <span class="transaction-meta">
@@ -219,8 +307,14 @@
                 {% if t.amount > 0 %}+{% endif %}{{ '{:,.0f}'.format(t.amount|float).replace(',', ' ') }}
                 <span class="currency-badge">{{ t.currency or '' }}</span>
             </span>
-        </a>
+        </div>
         {% endfor %}
+    </div>
+    </form>
+    
+    <div class="bulk-actions" id="bulk-actions">
+        <span class="count" id="selected-count">0 выбрано</span>
+        <button type="button" onclick="confirmBulkDelete()">🗑️ Удалить</button>
     </div>
 
     {% if has_more %}
@@ -262,4 +356,81 @@
     </a>
 </div>
 </nav>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let selectMode = false;
+
+function toggleSelectMode() {
+    selectMode = !selectMode;
+    const container = document.querySelector('.history-container');
+    const toggle = document.querySelector('.select-mode-toggle');
+    const icon = document.getElementById('select-mode-icon');
+    const text = document.getElementById('select-mode-text');
+    
+    if (selectMode) {
+        container.classList.add('select-mode');
+        toggle.classList.add('active');
+        icon.textContent = '☑';
+        text.textContent = 'Отменить выбор';
+    } else {
+        container.classList.remove('select-mode');
+        toggle.classList.remove('active');
+        icon.textContent = '☐';
+        text.textContent = 'Выбрать для удаления';
+        document.querySelectorAll('.transaction-checkbox').forEach(cb => cb.checked = false);
+        updateBulkActions();
+    }
+}
+
+function handleTransactionClick(event, id, editUrl) {
+    if (selectMode) {
+        event.preventDefault();
+        const checkbox = event.currentTarget.querySelector('.transaction-checkbox');
+        checkbox.checked = !checkbox.checked;
+        updateBulkActions();
+    } else {
+        window.location.href = '/finance/add?' + editUrl;
+    }
+}
+
+function toggleSelectAll() {
+    const selectAllCb = document.getElementById('select-all-checkbox');
+    const checkboxes = document.querySelectorAll('.transaction-checkbox:not(#select-all-checkbox)');
+    const newState = !selectAllCb.checked;
+    selectAllCb.checked = newState;
+    checkboxes.forEach(cb => cb.checked = newState);
+    updateBulkActions();
+}
+
+function updateBulkActions() {
+    const checkboxes = document.querySelectorAll('.transaction-checkbox:not(#select-all-checkbox):checked');
+    const count = checkboxes.length;
+    const bulkActions = document.getElementById('bulk-actions');
+    const countEl = document.getElementById('selected-count');
+    
+    if (count > 0) {
+        bulkActions.classList.add('visible');
+        countEl.textContent = count + ' выбрано';
+    } else {
+        bulkActions.classList.remove('visible');
+    }
+    
+    const allCheckboxes = document.querySelectorAll('.transaction-checkbox:not(#select-all-checkbox)');
+    const selectAllCb = document.getElementById('select-all-checkbox');
+    if (selectAllCb) {
+        selectAllCb.checked = count === allCheckboxes.length && count > 0;
+    }
+}
+
+function confirmBulkDelete() {
+    const count = document.querySelectorAll('.transaction-checkbox:not(#select-all-checkbox):checked').length;
+    if (count === 0) return;
+    
+    if (confirm(`Удалить ${count} операций? Это действие нельзя отменить.`)) {
+        document.getElementById('bulk-delete-form').submit();
+    }
+}
+</script>
 {% endblock %}

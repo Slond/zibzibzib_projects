@@ -284,7 +284,7 @@ async function loadData(eventId = null) {
             container.innerHTML = '<div class="empty-state">Нет операций<br><small>Нажмите + чтобы добавить</small></div>';
         } else {
             container.innerHTML = transactions.map(t => `
-                <a href="/finance/add?event=${t.event_id || ''}&edit=${t.id}" class="transaction-item">
+                <a href="/finance/add?${t.event_id ? 'event=' + t.event_id + '&' : ''}edit=${t.id}" class="transaction-item">
                     <div class="transaction-info">
                         <span class="transaction-merchant">${t.description || 'Операция'}</span>
                         <span class="transaction-meta">
