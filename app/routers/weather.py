@@ -38,8 +38,9 @@ async def weather_index(request: Request):
         return RedirectResponse(url="/login", status_code=302)
 
     return templates.TemplateResponse(
-        "weather/index.html",
-        {"request": request, "user": user}
+        request=request,
+        name="weather/index.html",
+        context={"user": user},
     )
 
 
@@ -110,9 +111,9 @@ async def weather_settings(request: Request):
         })
 
     return templates.TemplateResponse(
-        "weather/settings.html",
-        {
-            "request": request,
+        request=request,
+        name="weather/settings.html",
+        context={
             "user": user,
             "devices_grouped": grouped,
             "iqair_sensors": iqair_sensors,

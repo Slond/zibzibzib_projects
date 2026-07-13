@@ -196,9 +196,9 @@ async def finance_index(
         }
 
     return templates.TemplateResponse(
-        "finance/index.html",
-        {
-            "request": request,
+        request=request,
+        name="finance/index.html",
+        context={
             "user": user,
             "events": events,
             "budget_alert": alert,
@@ -282,9 +282,9 @@ async def add_page(
                 currencies.append(c)
 
     return templates.TemplateResponse(
-        "finance/add.html",
-        {
-            "request": request,
+        request=request,
+        name="finance/add.html",
+        context={
             "user": user,
             "transaction": transaction,
             "events": events,
@@ -483,9 +483,9 @@ async def history_page(
             categories = cat_result.scalars().all()
 
     return templates.TemplateResponse(
-        "finance/history.html",
-        {
-            "request": request,
+        request=request,
+        name="finance/history.html",
+        context={
             "user": user,
             "transactions": transactions,
             "categories": categories,
@@ -577,8 +577,9 @@ async def events_list_page(request: Request):
         events = await get_user_events(user.id, user.finance_account_id)
 
     return templates.TemplateResponse(
-        "finance/events.html",
-        {"request": request, "user": user, "account": account, "events": events}
+        request=request,
+        name="finance/events.html",
+        context={"user": user, "account": account, "events": events},
     )
 
 
@@ -603,9 +604,9 @@ async def event_settings_page(request: Request, event_id: int):
         members = result.scalars().all()
 
     return templates.TemplateResponse(
-        "finance/event_settings.html",
-        {
-            "request": request,
+        request=request,
+        name="finance/event_settings.html",
+        context={
             "user": user,
             "event": event,
             "members": members,
@@ -899,9 +900,9 @@ async def categories_page(request: Request, search: str = None):
             untagged_categories = [c for c in all_categories if c.tag_id is None]
 
     return templates.TemplateResponse(
-        "finance/categories.html",
-        {
-            "request": request,
+        request=request,
+        name="finance/categories.html",
+        context={
             "user": user,
             "tags": tags,
             "untagged_categories": untagged_categories,
@@ -1020,9 +1021,9 @@ async def budgets_page(request: Request):
             categories = cat_result.scalars().all()
 
     return templates.TemplateResponse(
-        "finance/budgets.html",
-        {
-            "request": request,
+        request=request,
+        name="finance/budgets.html",
+        context={
             "user": user,
             "budgets": budgets,
             "categories": categories,
@@ -1139,9 +1140,9 @@ async def recurring_page(request: Request):
             categories = cat_result.scalars().all()
 
     return templates.TemplateResponse(
-        "finance/recurring.html",
-        {
-            "request": request,
+        request=request,
+        name="finance/recurring.html",
+        context={
             "user": user,
             "recurring": recurring,
             "events": events,
@@ -1259,9 +1260,9 @@ async def analytics_page(
             selected_event = await get_finance_event_by_id(event_id)
 
     return templates.TemplateResponse(
-        "finance/analytics.html",
-        {
-            "request": request,
+        request=request,
+        name="finance/analytics.html",
+        context={
             "user": user,
             "events": events,
             "selected_event": selected_event,

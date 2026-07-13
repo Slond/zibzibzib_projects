@@ -37,8 +37,9 @@ async def index(request: Request):
     user_services = await get_user_services(user.id)
 
     return templates.TemplateResponse(
-        "dashboard/index.html",
-        {"request": request, "user": user, "services": user_services}
+        request=request,
+        name="dashboard/index.html",
+        context={"user": user, "services": user_services},
     )
 
 
@@ -80,9 +81,9 @@ async def admin_page(request: Request):
     access_map = {f"{a.user_id}_{a.service_id}": a for a in all_access}
 
     return templates.TemplateResponse(
-        "dashboard/admin.html",
-        {
-            "request": request,
+        request=request,
+        name="dashboard/admin.html",
+        context={
             "user": user,
             "users": users,
             "services": services,
@@ -277,8 +278,9 @@ async def profile_page(request: Request, success: str = None, error: str = None)
         return RedirectResponse(url="/login", status_code=302)
 
     return templates.TemplateResponse(
-        "dashboard/profile.html",
-        {"request": request, "user": user, "success": success, "error": error}
+        request=request,
+        name="dashboard/profile.html",
+        context={"user": user, "success": success, "error": error},
     )
 
 

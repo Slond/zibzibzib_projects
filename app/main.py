@@ -104,7 +104,11 @@ async def login_page(request: Request):
         if user.must_change_password:
             return RedirectResponse(url="/change-password", status_code=302)
         return RedirectResponse(url="/", status_code=302)
-    return templates.TemplateResponse("login.html", {"request": request})
+    return templates.TemplateResponse(
+        request=request,
+        name="login.html",
+        context={},
+    )
 
 
 @app.post("/login")
@@ -112,7 +116,9 @@ async def login(request: Request, email: str = Form(...), password: str = Form(.
     user = await authenticate_user(email, password)
     if not user:
         return templates.TemplateResponse(
-            "login.html", {"request": request, "error": "Неверный email или пароль"}
+            request=request,
+            name="login.html",
+            context={"error": "Неверный email или пароль"},
         )
 
     token = create_session_token(user.id)
@@ -141,7 +147,9 @@ async def change_password_page(request: Request):
     if not user:
         return RedirectResponse(url="/login", status_code=302)
     return templates.TemplateResponse(
-        "change_password.html", {"request": request, "user": user}
+        request=request,
+        name="change_password.html",
+        context={"user": user},
     )
 
 
@@ -157,14 +165,16 @@ async def change_password(
 
     if new_password != confirm_password:
         return templates.TemplateResponse(
-            "change_password.html",
-            {"request": request, "user": user, "error": "Пароли не совпадают"},
+            request=request,
+            name="change_password.html",
+            context={"user": user, "error": "Пароли не совпадают"},
         )
 
     if len(new_password) < 6:
         return templates.TemplateResponse(
-            "change_password.html",
-            {"request": request, "user": user, "error": "Пароль должен быть минимум 6 символов"},
+            request=request,
+            name="change_password.html",
+            context={"user": user, "error": "Пароль должен быть минимум 6 символов"},
         )
 
     await update_user_password(user.id, new_password)
