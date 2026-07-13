@@ -203,10 +203,10 @@
     <!-- Event Filter -->
     {% if events|length > 1 %}
     <div class="event-filter">
-        <a href="/finance/analytics?days={{ days }}" 
+        <a href="/finance/analytics?{% if request.query_params.get('date_from') %}date_from={{ request.query_params.get('date_from') }}&date_to={{ request.query_params.get('date_to') }}{% else %}period={{ period }}{% endif %}"
            class="event-chip {% if not selected_event %}active{% endif %}">Все события</a>
         {% for evt in events %}
-        <a href="/finance/analytics?event_id={{ evt.id }}&days={{ days }}" 
+        <a href="/finance/analytics?event_id={{ evt.id }}&{% if request.query_params.get('date_from') %}date_from={{ request.query_params.get('date_from') }}&date_to={{ request.query_params.get('date_to') }}{% else %}period={{ period }}{% endif %}"
            class="event-chip {% if selected_event and selected_event.id == evt.id %}active{% endif %}">
             {{ evt.name }}
         </a>
@@ -216,10 +216,10 @@
 
     <!-- Period Selector -->
     <div class="period-selector">
-        <button class="period-btn {% if days == 7 and not request.query_params.get('date_from') %}active{% endif %}" onclick="setPeriod(7)">7 дней</button>
-        <button class="period-btn {% if days == 30 and not request.query_params.get('date_from') %}active{% endif %}" onclick="setPeriod(30)">Месяц</button>
-        <button class="period-btn {% if days == 90 and not request.query_params.get('date_from') %}active{% endif %}" onclick="setPeriod(90)">3 месяца</button>
-        <button class="period-btn {% if days == 365 and not request.query_params.get('date_from') %}active{% endif %}" onclick="setPeriod(365)">Год</button>
+        <button class="period-btn {% if period == 'month' and not request.query_params.get('date_from') %}active{% endif %}" onclick="setPeriod('month')">Этот месяц</button>
+        <button class="period-btn {% if period == 'week' and not request.query_params.get('date_from') %}active{% endif %}" onclick="setPeriod('week')">Эта неделя</button>
+        <button class="period-btn {% if period == '3months' and not request.query_params.get('date_from') %}active{% endif %}" onclick="setPeriod('3months')">3 месяца</button>
+        <button class="period-btn {% if period == 'year' and not request.query_params.get('date_from') %}active{% endif %}" onclick="setPeriod('year')">Год</button>
         <button class="period-btn" onclick="toggleCustomRange()">📅</button>
     </div>
 
@@ -293,24 +293,50 @@
 let dailyChart = null;
 let categoryChart = null;
 const eventId = {{ selected_event.id if selected_event else 'null' }};
-let currentDays = {{ days }};
+const currentPeriod = '{{ period }}';
 let dateFrom = '{{ request.query_params.get("date_from", "") }}';
 let dateTo = '{{ request.query_params.get("date_to", "") }}';
 
-function setPeriod(days) {
+function setPeriod(period) {
     const url = new URL(window.location.href);
-    url.searchParams.set('days', days);
+    url.searchParams.set('period', period);
     url.searchParams.delete('date_from');
     url.searchParams.delete('date_to');
     window.location.href = url.toString();
+}
+
+function formatLocalDate(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function getPresetRange(period) {
+    const today = new Date();
+    let start;
+
+    if (period === 'week') {
+        start = new Date(today);
+        const daysFromMonday = (today.getDay() + 6) % 7;
+        start.setDate(today.getDate() - daysFromMonday);
+    } else if (period === '3months') {
+        start = new Date(today.getFullYear(), today.getMonth() - 2, 1);
+    } else if (period === 'year') {
+        start = new Date(today.getFullYear(), 0, 1);
+    } else {
+        start = new Date(today.getFullYear(), today.getMonth(), 1);
+    }
+
+    return { from: formatLocalDate(start), to: formatLocalDate(today) };
 }
 
 function toggleCustomRange() {
     const row = document.getElementById('date-range-row');
     row.style.display = row.style.display === 'none' ? 'flex' : 'none';
     if (row.style.display === 'flex') {
-        const today = new Date().toISOString().split('T')[0];
-        const weekAgo = new Date(Date.now() - 7*24*60*60*1000).toISOString().split('T')[0];
+        const today = formatLocalDate(new Date());
+        const weekAgo = formatLocalDate(new Date(Date.now() - 7*24*60*60*1000));
         if (!document.getElementById('date-from').value) {
             document.getElementById('date-from').value = weekAgo;
         }
@@ -327,7 +353,7 @@ function applyDateRange() {
         const url = new URL(window.location.href);
         url.searchParams.set('date_from', from);
         url.searchParams.set('date_to', to);
-        url.searchParams.delete('days');
+        url.searchParams.delete('period');
         window.location.href = url.toString();
     }
 }
@@ -346,7 +372,9 @@ async function loadAnalytics() {
         params.append('date_from', dateFrom);
         params.append('date_to', dateTo);
     } else {
-        params.append('days', currentDays);
+        const range = getPresetRange(currentPeriod);
+        params.append('date_from', range.from);
+        params.append('date_to', range.to);
     }
     if (eventId) params.append('event_id', eventId);
     

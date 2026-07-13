@@ -111,34 +111,67 @@
     font-size: 10px;
     color: #a5b4fc;
 }
-.load-more-container {
-    padding: 20px 0 40px;
-    text-align: center;
+.pagination {
+    padding: 24px 0 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
 }
-.load-more-btn {
-    display: inline-block;
-    padding: 14px 32px;
+.page-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    height: 44px;
+    padding: 0 14px;
     background: rgba(255,255,255,0.05);
     border: 1px solid rgba(255,255,255,0.1);
     border-radius: 12px;
     color: rgba(255,255,255,0.7);
     font-size: 14px;
-    cursor: pointer;
     transition: all 0.2s;
 }
-.load-more-btn:hover {
+.page-btn:hover {
     background: #4361ee;
     border-color: transparent;
     color: #fff;
 }
-.load-more-btn.loading {
-    pointer-events: none;
-    opacity: 0.6;
-}
 .page-info {
+    min-width: 72px;
+    text-align: center;
+    font-size: 13px;
+    color: rgba(255,255,255,0.5);
+}
+.date-filter {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 16px;
+}
+.date-input {
+    min-width: 0;
+    flex: 1;
+    padding: 10px 8px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px;
+    color: #fff;
     font-size: 12px;
-    color: rgba(255,255,255,0.3);
-    margin-top: 12px;
+    color-scheme: dark;
+}
+.date-apply {
+    height: 38px;
+    padding: 0 13px;
+    border: none;
+    border-radius: 10px;
+    background: #4361ee;
+    color: #fff;
+    cursor: pointer;
+}
+.date-reset {
+    color: rgba(255,255,255,0.5);
+    font-size: 18px;
 }
 .empty-state {
     text-align: center;
@@ -250,10 +283,10 @@
 <div class="history-container">
     {% if events|length > 1 %}
     <div class="event-filter">
-        <a href="/finance/history{% if current_category %}?category={{ current_category }}{% endif %}" 
+        <a href="/finance/history?{% if current_category %}category={{ current_category }}&{% endif %}{% if date_from %}date_from={{ date_from }}&{% endif %}{% if date_to %}date_to={{ date_to }}{% endif %}"
            class="event-chip {% if not selected_event %}active{% endif %}">Все</a>
         {% for evt in events %}
-        <a href="/finance/history?event={{ evt.id }}{% if current_category %}&category={{ current_category }}{% endif %}" 
+        <a href="/finance/history?event={{ evt.id }}{% if current_category %}&category={{ current_category }}{% endif %}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}"
            class="event-chip {% if selected_event and selected_event.id == evt.id %}active{% endif %}">
             {{ evt.name }}
         </a>
@@ -261,11 +294,23 @@
     </div>
     {% endif %}
 
+    <form class="date-filter" method="GET" action="/finance/history">
+        {% if selected_event %}<input type="hidden" name="event" value="{{ selected_event.id }}">{% endif %}
+        {% if current_category %}<input type="hidden" name="category" value="{{ current_category }}">{% endif %}
+        <input type="date" class="date-input" name="date_from" value="{{ date_from }}" aria-label="Дата начала">
+        <span style="color:rgba(255,255,255,0.4);">—</span>
+        <input type="date" class="date-input" name="date_to" value="{{ date_to }}" aria-label="Дата окончания">
+        <button type="submit" class="date-apply">OK</button>
+        {% if date_from or date_to %}
+        <a class="date-reset" href="/finance/history?{% if selected_event %}event={{ selected_event.id }}&{% endif %}{% if current_category %}category={{ current_category }}{% endif %}" aria-label="Сбросить даты">×</a>
+        {% endif %}
+    </form>
+
     <div class="filter-bar">
-        <a href="/finance/history{% if selected_event %}?event={{ selected_event.id }}{% endif %}" 
+        <a href="/finance/history?{% if selected_event %}event={{ selected_event.id }}&{% endif %}{% if date_from %}date_from={{ date_from }}&{% endif %}{% if date_to %}date_to={{ date_to }}{% endif %}"
            class="filter-chip {% if not current_category %}active{% endif %}">Все</a>
         {% for cat in categories %}
-        <a href="/finance/history?{% if selected_event %}event={{ selected_event.id }}&{% endif %}category={{ cat.name }}" 
+        <a href="/finance/history?{% if selected_event %}event={{ selected_event.id }}&{% endif %}category={{ cat.name }}{% if date_from %}&date_from={{ date_from }}{% endif %}{% if date_to %}&date_to={{ date_to }}{% endif %}"
            class="filter-chip {% if current_category == cat.name %}active{% endif %}">
             {{ cat.icon or '' }} {{ cat.name }}
         </a>
@@ -275,7 +320,7 @@
     {% if transactions %}
     <div class="select-mode-toggle" onclick="toggleSelectMode()">
         <span id="select-mode-icon">☐</span>
-        <span id="select-mode-text">Выбрать для удаления</span>
+        <span id="select-mode-text">Выбрать</span>
     </div>
     
     <form id="bulk-delete-form" method="POST" action="/finance/transactions/bulk-delete">
@@ -317,15 +362,20 @@
         <button type="button" onclick="confirmBulkDelete()">🗑️ Удалить</button>
     </div>
 
-    {% if has_more %}
-    <div class="load-more-container">
+    {% if total_pages > 1 %}
+    <div class="pagination">
         {% set base_url = '/finance/history?' %}
         {% if selected_event %}{% set base_url = base_url ~ 'event=' ~ selected_event.id ~ '&' %}{% endif %}
         {% if current_category %}{% set base_url = base_url ~ 'category=' ~ current_category ~ '&' %}{% endif %}
-        <a href="{{ base_url }}page={{ page + 1 }}" class="load-more-btn" id="load-more">
-            Загрузить ещё
-        </a>
-        <div class="page-info">Страница {{ page }}</div>
+        {% if date_from %}{% set base_url = base_url ~ 'date_from=' ~ date_from ~ '&' %}{% endif %}
+        {% if date_to %}{% set base_url = base_url ~ 'date_to=' ~ date_to ~ '&' %}{% endif %}
+        {% if page > 1 %}
+        <a href="{{ base_url }}page={{ page - 1 }}" class="page-btn" aria-label="Предыдущая страница">←</a>
+        {% endif %}
+        <div class="page-info">{{ page }} / {{ total_pages }}</div>
+        {% if page < total_pages %}
+        <a href="{{ base_url }}page={{ page + 1 }}" class="page-btn" aria-label="Следующая страница">→</a>
+        {% endif %}
     </div>
     {% endif %}
     {% else %}
@@ -373,12 +423,12 @@ function toggleSelectMode() {
         container.classList.add('select-mode');
         toggle.classList.add('active');
         icon.textContent = '☑';
-        text.textContent = 'Отменить выбор';
+        text.textContent = 'Отмена';
     } else {
         container.classList.remove('select-mode');
         toggle.classList.remove('active');
         icon.textContent = '☐';
-        text.textContent = 'Выбрать для удаления';
+        text.textContent = 'Выбрать';
         document.querySelectorAll('.transaction-checkbox').forEach(cb => cb.checked = false);
         updateBulkActions();
     }

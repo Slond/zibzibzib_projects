@@ -441,6 +441,8 @@ async def history_page(
     page: int = 1,
     event: int = None,
     category: str = None,
+    date_from: str = None,
+    date_to: str = None,
 ):
     """Transaction history with filters"""
     user = await require_finance_access(request)
@@ -451,36 +453,93 @@ async def history_page(
     categories = []
     events = []
     selected_event = None
-    has_more = False
+    total_pages = 1
+    page = max(page, 1)
+
+    since = None
+    until = None
+    try:
+        if date_from:
+            since = datetime.strptime(date_from, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        if date_to:
+            until = (
+                datetime.strptime(date_to, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                + timedelta(days=1)
+            )
+    except ValueError:
+        date_from = None
+        date_to = None
+        since = None
+        until = None
 
     if user.finance_account_id:
-        per_page = 50
-        offset = (page - 1) * per_page
+        per_page = 20
         
         events = await get_user_events(user.id, user.finance_account_id)
         if event:
             selected_event = await get_finance_event_by_id(event)
 
         async with async_session() as session:
-            query = select(Transaction).where(Transaction.account_id == user.finance_account_id)
+            scope_filters = [Transaction.account_id == user.finance_account_id]
             if event:
-                query = query.where(Transaction.event_id == event)
-            if category:
-                query = query.where(Transaction.category == category)
-            query = query.order_by(desc(Transaction.timestamp)).offset(offset).limit(per_page + 1)
+                scope_filters.append(Transaction.event_id == event)
+            if since:
+                scope_filters.append(Transaction.timestamp >= since)
+            if until:
+                scope_filters.append(Transaction.timestamp < until)
 
+            transaction_filters = list(scope_filters)
+            if category:
+                transaction_filters.append(Transaction.category == category)
+
+            count_result = await session.execute(
+                select(func.count(Transaction.id)).where(and_(*transaction_filters))
+            )
+            total_transactions = count_result.scalar() or 0
+            total_pages = max(1, (total_transactions + per_page - 1) // per_page)
+            page = min(page, total_pages)
+            offset = (page - 1) * per_page
+
+            query = (
+                select(Transaction)
+                .where(and_(*transaction_filters))
+                .order_by(desc(Transaction.timestamp))
+                .offset(offset)
+                .limit(per_page)
+            )
             result = await session.execute(query)
             transactions = result.scalars().all()
 
-            has_more = len(transactions) > per_page
-            transactions = transactions[:per_page]
-
+            usd_amount = func.coalesce(Transaction.amount_usd, Transaction.amount)
             cat_result = await session.execute(
-                select(Category)
-                .where(Category.account_id == user.finance_account_id)
-                .order_by(desc(Category.usage_count))
+                select(
+                    Transaction.category.label("name"),
+                    Category.icon.label("icon"),
+                    func.sum(func.abs(usd_amount)).label("total"),
+                )
+                .outerjoin(
+                    Category,
+                    and_(
+                        Category.account_id == Transaction.account_id,
+                        Category.name == Transaction.category,
+                    ),
+                )
+                .where(
+                    and_(
+                        *scope_filters,
+                        Transaction.amount < 0,
+                        Transaction.category.is_not(None),
+                        Transaction.category != "",
+                    )
+                )
+                .group_by(Transaction.category, Category.icon)
+                .order_by(desc(func.sum(func.abs(usd_amount))))
+                .limit(20)
             )
-            categories = cat_result.scalars().all()
+            categories = [
+                {"name": row.name, "icon": row.icon, "total": float(row.total or 0)}
+                for row in cat_result.all()
+            ]
 
     return templates.TemplateResponse(
         request=request,
@@ -493,7 +552,9 @@ async def history_page(
             "selected_event": selected_event,
             "current_category": category,
             "page": page,
-            "has_more": has_more,
+            "total_pages": total_pages,
+            "date_from": date_from or "",
+            "date_to": date_to or "",
         }
     )
 
@@ -1244,7 +1305,7 @@ async def delete_recurring(request: Request, recurring_id: int):
 async def analytics_page(
     request: Request,
     event_id: int = None,
-    days: int = 30,
+    period: str = "month",
 ):
     """Analytics page with charts"""
     user = await require_finance_access(request)
@@ -1253,6 +1314,8 @@ async def analytics_page(
 
     events = []
     selected_event = None
+    if period not in {"month", "week", "3months", "year"}:
+        period = "month"
     
     if user.finance_account_id:
         events = await get_user_events(user.id, user.finance_account_id)
@@ -1266,7 +1329,7 @@ async def analytics_page(
             "user": user,
             "events": events,
             "selected_event": selected_event,
-            "days": days,
+            "period": period,
         }
     )
 
