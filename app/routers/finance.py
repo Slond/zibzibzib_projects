@@ -9,7 +9,7 @@ from fastapi import APIRouter, Request, Form, Query, HTTPException
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-from sqlalchemy import select, func, desc, and_, or_
+from sqlalchemy import select, func, desc, and_, or_, case
 
 from app.database import (
     async_session,
@@ -1314,8 +1314,8 @@ async def api_analytics_daily(
         result = await session.execute(
             select(
                 func.date(Transaction.timestamp).label("day"),
-                func.sum(func.case((Transaction.amount < 0, usd_amount), else_=0)).label("expenses"),
-                func.sum(func.case((Transaction.amount > 0, usd_amount), else_=0)).label("income"),
+                func.sum(case((Transaction.amount < 0, usd_amount), else_=0)).label("expenses"),
+                func.sum(case((Transaction.amount > 0, usd_amount), else_=0)).label("income"),
             )
             .where(and_(*base_filter))
             .group_by(func.date(Transaction.timestamp))
