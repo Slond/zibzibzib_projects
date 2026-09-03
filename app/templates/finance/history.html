@@ -269,6 +269,29 @@
 .select-mode .select-all-row {
     display: flex;
 }
+.export-link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 12px;
+    color: rgba(255,255,255,0.8);
+    font-size: 14px;
+    transition: all 0.2s;
+}
+.export-link:hover {
+    background: rgba(67, 97, 238, 0.2);
+    border-color: #4361ee;
+    color: #fff;
+}
+.export-link span {
+    color: rgba(255,255,255,0.45);
+    font-size: 12px;
+}
 {% endblock %}
 
 {% block body %}
@@ -316,6 +339,19 @@
         </a>
         {% endfor %}
     </div>
+
+    <a class="export-link" href="/finance/export.csv?{% if selected_event %}event={{ selected_event.id }}&{% endif %}{% if current_category %}category={{ current_category|urlencode }}&{% endif %}{% if date_from %}date_from={{ date_from }}&{% endif %}{% if date_to %}date_to={{ date_to }}{% endif %}">
+        ⬇ Скачать CSV
+        {% if date_from and date_to %}
+        <span>{{ date_from }} — {{ date_to }}</span>
+        {% elif date_from %}
+        <span>с {{ date_from }}</span>
+        {% elif date_to %}
+        <span>до {{ date_to }}</span>
+        {% else %}
+        <span>все операции</span>
+        {% endif %}
+    </a>
 
     {% if transactions %}
     <div class="select-mode-toggle" onclick="toggleSelectMode()">

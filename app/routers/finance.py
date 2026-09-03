@@ -1,4 +1,6 @@
 """Finance router - transaction tracking with webhook for iOS Shortcuts"""
+import csv
+import io
 import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -6,7 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Request, Form, Query, HTTPException
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy import select, func, desc, and_, or_, case
@@ -47,6 +49,39 @@ async def require_finance_access(request: Request):
     if not user.is_admin and not await has_service_access(user.id, "finance"):
         return None
     return user
+
+
+def _parse_date_range(date_from: Optional[str], date_to: Optional[str]):
+    """Parse YYYY-MM-DD range. End date is inclusive (until = next day exclusive)."""
+    since = None
+    until = None
+    try:
+        if date_from:
+            since = datetime.strptime(date_from, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        if date_to:
+            until = (
+                datetime.strptime(date_to, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                + timedelta(days=1)
+            )
+    except ValueError:
+        return None, None
+    return since, until
+
+
+def _format_decimal(value) -> str:
+    if value is None:
+        return ""
+    return f"{value:.2f}"
+
+
+def _safe_filename_date(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        return None
+    return value
 
 
 # ============ Webhook (Token-based, no auth) ============
@@ -556,6 +591,102 @@ async def history_page(
             "date_from": date_from or "",
             "date_to": date_to or "",
         }
+    )
+
+
+@router.get("/export.csv")
+async def export_transactions_csv(
+    request: Request,
+    event: int = Query(None),
+    event_id: int = Query(None),
+    category: str = Query(None),
+    date_from: str = Query(None),
+    date_to: str = Query(None),
+    kind: str = Query("all"),
+):
+    """Download transactions as CSV for a date range and current filters."""
+    user = await require_finance_access(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    if not user.finance_account_id:
+        raise HTTPException(status_code=400, detail="No finance account")
+
+    selected_event_id = event or event_id
+    since, until = _parse_date_range(date_from, date_to)
+    kind = (kind or "all").lower()
+    if kind not in {"all", "expense", "income"}:
+        kind = "all"
+
+    filters = [Transaction.account_id == user.finance_account_id]
+    if selected_event_id:
+        filters.append(Transaction.event_id == selected_event_id)
+    if since:
+        filters.append(Transaction.timestamp >= since)
+    if until:
+        filters.append(Transaction.timestamp < until)
+    if category:
+        filters.append(Transaction.category == category)
+    if kind == "expense":
+        filters.append(Transaction.amount < 0)
+    elif kind == "income":
+        filters.append(Transaction.amount > 0)
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(Transaction, FinanceEvent.name)
+            .outerjoin(FinanceEvent, Transaction.event_id == FinanceEvent.id)
+            .where(and_(*filters))
+            .order_by(Transaction.timestamp.asc(), Transaction.id.asc())
+        )
+        rows = result.all()
+
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output)
+    writer.writerow([
+        "date",
+        "time",
+        "type",
+        "category",
+        "description",
+        "amount",
+        "currency",
+        "amount_usd",
+        "exchange_rate",
+        "event",
+        "source",
+    ])
+    for transaction, event_name in rows:
+        ts = transaction.timestamp
+        writer.writerow([
+            ts.strftime("%Y-%m-%d") if ts else "",
+            ts.strftime("%H:%M") if ts else "",
+            "expense" if transaction.amount is not None and transaction.amount < 0 else "income",
+            transaction.category or "",
+            transaction.description or "",
+            _format_decimal(transaction.amount),
+            transaction.currency or "",
+            _format_decimal(transaction.amount_usd),
+            _format_decimal(transaction.exchange_rate),
+            event_name or "",
+            transaction.source or "",
+        ])
+
+    from_part = _safe_filename_date(date_from)
+    to_part = _safe_filename_date(date_to)
+    if from_part and to_part:
+        filename = f"finance_{from_part}_{to_part}.csv"
+    elif from_part:
+        filename = f"finance_from_{from_part}.csv"
+    elif to_part:
+        filename = f"finance_until_{to_part}.csv"
+    else:
+        filename = "finance_all.csv"
+
+    return Response(
+        content=output.getvalue().encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
