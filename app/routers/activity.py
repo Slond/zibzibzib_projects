@@ -4,7 +4,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, Form
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from app.auth import get_current_user, has_service_access
@@ -32,6 +32,11 @@ from app.services.activity import (
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/activity")
 templates = Jinja2Templates(directory=Path(__file__).parent.parent / "templates")
+CLIENT_DIR = Path(__file__).resolve().parents[2] / "clients" / "activity"
+CLIENT_FILES = {
+    "client.py": "text/x-python; charset=utf-8",
+    "requirements.txt": "text/plain; charset=utf-8",
+}
 
 
 def public_base(request: Request) -> str:
@@ -114,6 +119,45 @@ def pick_number(data: dict, *keys: str) -> float | None:
             continue
         return float(str(data[key]).replace(",", "."))
     return None
+
+
+def client_bundle(name: str) -> Path:
+    media = CLIENT_FILES.get(name)
+    if not media:
+        raise HTTPException(status_code=404, detail="not found")
+    path = (CLIENT_DIR / name).resolve()
+    if path.parent != CLIENT_DIR.resolve() or not path.is_file():
+        raise HTTPException(status_code=404, detail="not found")
+    return path
+
+
+async def require_desktop_device(token: str):
+    device = await require_device(token)
+    if device.platform == "iphone":
+        raise HTTPException(status_code=404, detail="unknown device")
+    return device
+
+
+@router.get("/api/client/{token}/requirements.txt")
+async def download_client_requirements(token: str):
+    await require_desktop_device(token)
+    return FileResponse(
+        client_bundle("requirements.txt"),
+        media_type=CLIENT_FILES["requirements.txt"],
+        filename="requirements.txt",
+        headers={"Cache-Control": "private, no-store"},
+    )
+
+
+@router.get("/api/client/{token}")
+async def download_client(token: str):
+    await require_desktop_device(token)
+    return FileResponse(
+        client_bundle("client.py"),
+        media_type=CLIENT_FILES["client.py"],
+        filename="client.py",
+        headers={"Cache-Control": "private, no-store"},
+    )
 
 
 @router.get("/api/config/{token}")

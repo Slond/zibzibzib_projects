@@ -52,18 +52,60 @@
         </ol>
         <pre class="token">{"latitude": 0, "longitude": 0}</pre>
         {% else %}
-        <p class="hint">Клиент лежит в репозитории: <span class="token" style="display:inline;">clients/activity</span>. Это программа на компьютере: она отправляет активное приложение и заголовок окна. У браузера это название вкладки. Если Mac и Windows работают в одно время, день показывает это как «рядом».</p>
+        <p class="hint">Одна команда скачивает клиент в свою папку и включает его при входе в систему. До входа окон ещё нет, поэтому старт привязан к рабочему столу, а не к включению питания. После смены токена вставьте команду ещё раз. Если адрес начинается с localhost, подставьте внешний домен.</p>
         {% if device.platform == 'windows' %}
-        <pre class="token" id="cmd-{{ device.id }}">cd clients\activity
-py -3 -m pip install -r requirements.txt
-py -3 client.py --server {{ base_url }} --token {{ device.token }}</pre>
+        <pre class="token" id="cmd-{{ device.id }}">set DIR=%APPDATA%\activity-client
+mkdir "%DIR%"
+curl.exe -fsSL "{{ base_url }}/activity/api/client/{{ device.token }}" -o "%DIR%\client.py"
+curl.exe -fsSL "{{ base_url }}/activity/api/client/{{ device.token }}/requirements.txt" -o "%DIR%\requirements.txt"
+py -3 -m pip install -r "%DIR%\requirements.txt"
+(
+echo @echo off
+echo py -3 "%DIR%\client.py" --server {{ base_url }} --token {{ device.token }}
+) > "%DIR%\start.cmd"
+schtasks /Create /F /SC ONLOGON /TN ActivityClient /TR "\"%DIR%\start.cmd\""
+"%DIR%\start.cmd"</pre>
+        <p class="hint">Вставьте это в cmd. Клиент стартует при следующем входе и сразу после этих команд.</p>
         {% else %}
-        <pre class="token" id="cmd-{{ device.id }}">cd clients/activity
-python3 -m pip install -r requirements.txt
-python3 client.py --server {{ base_url }} --token {{ device.token }}</pre>
-        <p class="hint">На Mac клиенту нужно разрешение «Универсальный доступ» для Terminal или iTerm, чтобы прочитать название окна. Запись экрана не нужна.</p>
+        <pre class="token" id="cmd-{{ device.id }}">DIR="$HOME/Library/Application Support/activity-client"
+mkdir -p "$DIR" "$HOME/Library/LaunchAgents"
+curl -fsSL "{{ base_url }}/activity/api/client/{{ device.token }}" -o "$DIR/client.py"
+curl -fsSL "{{ base_url }}/activity/api/client/{{ device.token }}/requirements.txt" -o "$DIR/requirements.txt"
+python3 -m pip install -r "$DIR/requirements.txt"
+PY=$(python3 -c 'import sys; print(sys.executable)')
+cat > "$HOME/Library/LaunchAgents/activity-client.plist" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>activity-client</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$PY</string>
+    <string>$DIR/client.py</string>
+    <string>--server</string>
+    <string>{{ base_url }}</string>
+    <string>--token</string>
+    <string>{{ device.token }}</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>$DIR</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>$HOME/Library/Logs/activity-client.log</string>
+  <key>StandardErrorPath</key>
+  <string>$HOME/Library/Logs/activity-client.log</string>
+</dict>
+</plist>
+EOF
+launchctl bootout "gui/$(id -u)/activity-client" 2>/dev/null || true
+launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/activity-client.plist"</pre>
+        <p class="hint">Вставьте это в Терминал. macOS один раз спросит «Универсальный доступ» для Python: без этого не прочитается название окна. Запись экрана не нужна.</p>
         {% endif %}
-        <p class="hint">Если скопированный адрес начинается с localhost, подставьте внешний домен сервера.</p>
         <div class="row-actions" style="margin-top:12px;">
             <button type="button" class="btn small" onclick="navigator.clipboard.writeText(document.getElementById('cmd-{{ device.id }}').innerText)">Копировать команду</button>
         </div>
