@@ -139,7 +139,7 @@ def wifi_ssid() -> str:
     return ""
 
 
-def front_window() -> tuple[str, str]:
+def front_window() -> tuple[str, str, str]:
     try:
         if sys.platform == "darwin":
             script = """
@@ -155,16 +155,20 @@ def front_window() -> tuple[str, str]:
             end tell
             return frontApp & linefeed & windowName
             """
-            out = subprocess.check_output(
+            proc = subprocess.run(
                 ["osascript", "-e", script],
                 text=True,
                 errors="replace",
                 timeout=8,
+                capture_output=True,
             )
-            lines = out.splitlines()
+            if proc.returncode != 0:
+                err = (proc.stderr or proc.stdout or "osascript завершился с ошибкой").strip()
+                return "", "", err
+            lines = proc.stdout.splitlines()
             app = lines[0].strip() if lines else ""
             title = lines[1].strip() if len(lines) > 1 else ""
-            return app, title
+            return app, title, ""
         if sys.platform == "win32":
             user32 = ctypes.windll.user32
             kernel32 = ctypes.windll.kernel32
@@ -197,10 +201,10 @@ def front_window() -> tuple[str, str]:
                 if kernel32.QueryFullProcessImageNameW(handle, 0, exe, ctypes.byref(size)):
                     app = Path(exe.value).stem
                 kernel32.CloseHandle(handle)
-            return app, buf.value
-    except (OSError, subprocess.SubprocessError):
-        return "", ""
-    return "", ""
+            return app, buf.value, ""
+    except (OSError, subprocess.SubprocessError) as exc:
+        return "", "", str(exc)
+    return "", "", ""
 
 
 def send_sample(server: str, token: str, app: str, title: str, ssid: str):
@@ -237,11 +241,46 @@ def tick(server: str, token: str, remote: dict):
     if idle >= idle_limit:
         print(f"Простой {int(idle)} с, запись пропущена")
         return
-    app, title = front_window()
+    app, title, err = front_window()
+    if err or (not app and not title):
+        print(f"Окно не прочиталось: {err or 'приложение и заголовок пустые'}")
+        return
     if is_skipped(app, skip):
         print(f"{app}: заголовок окна не отправляю")
         title = ""
     send_sample(server, token, app, title, wifi_ssid())
+
+
+def preview(server: str | None, token: str | None):
+    print("Через 3 секунды сниму активное окно. Переключитесь на него.")
+    time.sleep(3)
+    idle = idle_seconds()
+    app, title, err = front_window()
+    ssid = wifi_ssid()
+    skip = DEFAULT_SKIP
+    idle_limit = 3 * 60
+    if server and token:
+        remote = fetch_config(server, token)
+        if remote:
+            skip = remote.get("skip_apps") or DEFAULT_SKIP
+            try:
+                idle_limit = max(1, int(remote.get("idle_minutes") or 3)) * 60
+            except (TypeError, ValueError):
+                idle_limit = 3 * 60
+    sent_title = "" if is_skipped(app, skip) else title
+    payload = {"app_name": app, "window_title": sent_title, "wifi_ssid": ssid}
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    print(f"Простой: {int(idle)} с, порог {idle_limit} с")
+    if err:
+        print(f"Окно не прочиталось: {err}")
+    elif idle >= idle_limit:
+        print("На сервер это не уйдёт: простой")
+    elif not app and not sent_title:
+        print("На сервер это не уйдёт: приложение и заголовок пустые")
+    elif not sent_title and title:
+        print(f"Заголовок скрыт, уйдёт только приложение: {app}")
+    else:
+        print("Именно это ушло бы на сервер.")
 
 def fetch_config(server: str, token: str) -> dict | None:
     import httpx
@@ -272,6 +311,7 @@ def main():
     parser.add_argument("--token", help="токен устройства со страницы Активность")
     parser.add_argument("--config", default=str(config_path()))
     parser.add_argument("--once", action="store_true", help="один проход и выход")
+    parser.add_argument("--preview", action="store_true", help="показать данные и не отправлять")
     args = parser.parse_args()
 
     path = Path(args.config)
@@ -282,6 +322,9 @@ def main():
         cfg["token"] = args.token.strip()
     if args.server or args.token:
         save_config(path, cfg)
+    if args.preview:
+        preview(cfg.get("server"), cfg.get("token"))
+        return
     if not cfg.get("server") or not cfg.get("token"):
         print("Укажите --server и --token. Они сохранятся в конфиг клиента.")
         sys.exit(2)

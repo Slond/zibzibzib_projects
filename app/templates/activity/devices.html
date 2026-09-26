@@ -97,7 +97,7 @@ DOMAIN="gui/$(id -u)"
 launchctl bootout "$DOMAIN/activity-client" 2>/dev/null || true
 launchctl enable "$DOMAIN/activity-client"
 launchctl bootstrap "$DOMAIN" "$PLIST"</pre>
-        <p class="hint">Вставьте это в Терминал. Пакеты ставятся в отдельное окружение рядом с клиентом, системный Python не меняется. macOS один раз спросит «Универсальный доступ» для Python: без этого не прочитается название окна. Запись экрана не нужна.</p>
+        <p class="hint">Вставьте это в Терминал. Пакеты ставятся в отдельное окружение рядом с клиентом, системный Python не меняется. macOS один раз спросит «Универсальный доступ» для Python: без этого не прочитается название окна. Запись экрана не нужна. Проверка без отправки: <span class="token" style="display:inline;">"$HOME/Library/Application Support/activity-client/venv/bin/python" "$HOME/Library/Application Support/activity-client/client.py" --preview</span></p>
         {% endif %}
         <div class="row-actions" style="margin-top:12px;">
             <button type="button" class="btn small" onclick="navigator.clipboard.writeText(document.getElementById('cmd-{{ device.id }}').innerText)">Копировать команду</button>

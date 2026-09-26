@@ -406,6 +406,11 @@ async def record_screen(
             await session.commit()
             return IngestResult(status="skipped", reason="too_soon")
 
+        if not app_name and not window_title:
+            row.last_seen_at = recorded_at
+            await session.commit()
+            return IngestResult(status="skipped", reason="no_window")
+
         places = await _places_for(session, device.user_id)
         place = match_place(places, wifi_ssid, None, None)
         sensitive = is_sensitive_app(app_name, settings.skip_apps)
