@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Настройки — Активность{% endblock %}
+{% block extra_styles %}
+{% include "activity/_styles.html" %}
+{% endblock %}
+{% block body %}
+{% include "activity/_chrome.html" %}
+
+    <form method="post" action="/activity/settings">
+        <div class="card">
+            <h2 class="section-title">Запись</h2>
+            <p class="hint">В дневник попадают имя программы и заголовок окна. У браузера заголовок окна — это открытая вкладка. Снимки экрана не отправляются.</p>
+            <div class="form-group">
+                <label>Временная зона</label>
+                <input type="text" name="timezone_name" value="{{ prefs.timezone }}" list="timezones">
+                <datalist id="timezones">
+                    <option value="Asia/Almaty"></option>
+                    <option value="Asia/Aqtobe"></option>
+                    <option value="Asia/Qyzylorda"></option>
+                    <option value="Europe/Moscow"></option>
+                    <option value="UTC"></option>
+                </datalist>
+            </div>
+            <div class="form-group">
+                <label>Интервал на компьютере, минуты</label>
+                <input type="number" name="sample_minutes" min="1" max="60" value="{{ prefs.sample_minutes }}">
+            </div>
+            <div class="form-group">
+                <label>Не записывать, если простой дольше, минуты</label>
+                <input type="number" name="idle_minutes" min="1" max="60" value="{{ prefs.idle_minutes }}">
+            </div>
+            <p class="hint">Для приложений из списка сохраняется только имя программы, без заголовка окна или вкладки.</p>
+            <div class="form-group">
+                <label>Без заголовка окна</label>
+                <textarea name="skip_apps">{{ prefs.skip_apps }}</textarea>
+            </div>
+            <button class="btn" type="submit">Сохранить</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

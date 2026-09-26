@@ -48,6 +48,11 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') {
     return;
   }
+
+  // Screen captures stay out of the service-worker cache.
+  if (url.pathname.startsWith('/activity/shots')) {
+    return;
+  }
   
   // API requests - network first
   if (url.pathname.startsWith('/finance/api/')) {

@@ -13,6 +13,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Text,
 )
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
@@ -327,6 +328,79 @@ class IQAirSensor(Base):
     track_pm10 = Column(Boolean, default=True)
     created_at = Column(DateTime, default=utcnow)
     last_poll = Column(DateTime, nullable=True)
+
+
+# ============================================
+# Activity module (per user)
+# ============================================
+
+class ActivitySettings(Base):
+    """Personal activity diary settings. One row per user."""
+    __tablename__ = "activity_settings"
+
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    openai_api_key = Column(String, nullable=True)
+    openai_model = Column(String, default="gpt-4o-mini")
+    retention_days = Column(Integer, default=7)
+    timezone = Column(String, default="Asia/Almaty")
+    sample_minutes = Column(Integer, default=5)
+    idle_minutes = Column(Integer, default=3)
+    skip_apps = Column(Text, nullable=True)
+
+
+class ActivityDevice(Base):
+    """A Mac, Windows PC, or iPhone that reports into one user's diary."""
+    __tablename__ = "activity_devices"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    platform = Column(String, nullable=False)  # mac, windows, iphone
+    token = Column(String, unique=True, nullable=False, default=generate_webhook_token, index=True)
+    created_at = Column(DateTime, default=utcnow)
+    last_seen_at = Column(DateTime, nullable=True)
+
+
+class ActivityPlace(Base):
+    """A place the user named: Wi-Fi for computers, coordinates for the phone."""
+    __tablename__ = "activity_places"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    note = Column(String, nullable=True)
+    wifi_ssid = Column(String, nullable=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    radius_m = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+
+
+class ActivityEvent(Base):
+    """One sample: a screen on a computer or a location from the phone."""
+    __tablename__ = "activity_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    device_id = Column(Integer, ForeignKey("activity_devices.id"), nullable=False, index=True)
+    place_id = Column(Integer, ForeignKey("activity_places.id"), nullable=True, index=True)
+    recorded_at = Column(DateTime, default=utcnow, index=True)
+    kind = Column(String, nullable=False)  # screen, location
+    app_name = Column(String, nullable=True)
+    window_title = Column(String, nullable=True)
+    wifi_ssid = Column(String, nullable=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    accuracy_m = Column(Float, nullable=True)
+    screenshot_path = Column(String, nullable=True)
+    summary = Column(Text, nullable=True)
+    analysis_status = Column(String, default="skipped")  # pending, done, skipped, error
+    analysis_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+
+    __table_args__ = (
+        Index("idx_activity_user_time", "user_id", "recorded_at"),
+    )
 
 
 # ============================================

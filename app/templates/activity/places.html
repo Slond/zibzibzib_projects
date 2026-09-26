@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Места — Активность{% endblock %}
+{% block extra_styles %}
+{% include "activity/_styles.html" %}
+{% endblock %}
+{% block body %}
+{% include "activity/_chrome.html" %}
+
+    <div class="card">
+        <h2 class="section-title">{% if form and form.id %}Изменить место{% else %}Новое место{% endif %}</h2>
+        <p class="hint">Wi‑Fi нужен для Mac и Windows: по имени сети видно, за каким компьютером вы дома. Координаты нужны для iPhone. У одного места можно указать оба.</p>
+        <form method="post" action="/activity/places">
+            <input type="hidden" name="place_id" value="{{ form.id if form else '' }}">
+            <div class="form-group">
+                <label>Название</label>
+                <input type="text" name="name" required maxlength="80" value="{{ form.name if form else '' }}" placeholder="Дом">
+            </div>
+            <div class="form-group">
+                <label>Чем здесь занимаюсь</label>
+                <input type="text" name="note" maxlength="200" value="{{ form.note if form else '' }}" placeholder="Код, учёба, тренировка">
+            </div>
+            <div class="form-group">
+                <label>Имя сети Wi‑Fi</label>
+                <input type="text" name="wifi_ssid" maxlength="128" value="{{ form.wifi_ssid if form else '' }}" placeholder="точно как в системе">
+            </div>
+            <div class="form-group">
+                <label>Широта</label>
+                <input type="text" name="latitude" id="place-lat" value="{{ form.latitude if form and form.latitude is not none else '' }}" placeholder="43.25">
+            </div>
+            <div class="form-group">
+                <label>Долгота</label>
+                <input type="text" name="longitude" id="place-lon" value="{{ form.longitude if form and form.longitude is not none else '' }}" placeholder="76.95">
+            </div>
+            <div class="form-group">
+                <label>Радиус, метры</label>
+                <input type="text" name="radius_m" value="{{ form.radius_m if form and form.radius_m is not none else '' }}" placeholder="150">
+            </div>
+            {% if last_fix %}
+            <button type="button" class="btn small secondary" style="margin-bottom:16px;" onclick="document.getElementById('place-lat').value='{{ last_fix.lat }}';document.getElementById('place-lon').value='{{ last_fix.lon }}';">
+                Подставить последнюю точку телефона
+            </button>
+            {% else %}
+            <p class="hint">Когда телефон пришлёт точку, здесь появится кнопка, чтобы подставить её в место.</p>
+            {% endif %}
+            <button class="btn" type="submit">Сохранить</button>
+        </form>
+    </div>
+
+    {% if places %}
+        {% for place in places %}
+        <div class="card">
+            <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
+                <div>
+                    <strong>{{ place.name }}</strong>
+                    {% if place.note %}<div class="hint" style="margin:6px 0 0;">{{ place.note }}</div>{% endif %}
+                    <div class="segment-meta">
+                        {% if place.wifi_ssid %}Wi‑Fi {{ place.wifi_ssid }}{% endif %}
+                        {% if place.latitude is not none %}
+                        {% if place.wifi_ssid %} · {% endif %}
+                        {{ "%.5f"|format(place.latitude) }}, {{ "%.5f"|format(place.longitude) }}
+                        {% if place.radius_m %} · {{ place.radius_m }} м{% endif %}
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="row-actions">
+                    <a class="btn small secondary" href="/activity/places?edit={{ place.id }}">Изменить</a>
+                    <form method="post" action="/activity/places/{{ place.id }}/delete" onsubmit="return confirm('Удалить место? События останутся без подписи.');">
+                        <button class="btn small danger" type="submit">Удалить</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+    <div class="empty-state">Мест пока нет.</div>
+    {% endif %}
+</div>
+{% endblock %}

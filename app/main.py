@@ -20,10 +20,12 @@ from app.auth import (
     get_current_user,
     update_user_password,
     ensure_admin_exists,
+    ensure_activity_service,
     SESSION_COOKIE,
 )
 from app.services.scheduler import poll_yandex_devices, process_recurring_transactions, poll_iqair_sensors
-from app.routers import dashboard, finance, weather
+from app.services.activity import purge_expired_screenshots
+from app.routers import dashboard, finance, weather, activity
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,6 +44,8 @@ async def lifespan(app: FastAPI):
 
     await ensure_admin_exists()
     logger.info("Admin user ensured")
+    await ensure_activity_service()
+    logger.info("Activity service ensured")
 
     if YANDEX_TOKEN:
         scheduler.add_job(
@@ -74,6 +78,14 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
     await poll_iqair_sensors()
+
+    scheduler.add_job(
+        purge_expired_screenshots,
+        "interval",
+        hours=6,
+        id="activity_purge",
+        replace_existing=True,
+    )
     
     scheduler.start()
     logger.info("Scheduler started")
@@ -93,6 +105,7 @@ app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), na
 app.include_router(dashboard.router)
 app.include_router(finance.router)
 app.include_router(weather.router)
+app.include_router(activity.router)
 
 
 # ============ Shared Auth Routes ============

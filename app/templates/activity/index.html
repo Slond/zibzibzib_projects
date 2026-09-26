@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Активность{% endblock %}
+{% block extra_styles %}
+{% include "activity/_styles.html" %}
+{% endblock %}
+{% block body %}
+{% include "activity/_chrome.html" %}
+
+    <div class="day-switch">
+        <a class="btn small secondary" href="/activity?date={{ prev_date }}">←</a>
+        <form method="get" action="/activity" class="day-switch" style="margin:0;">
+            <input type="date" name="date" value="{{ day }}">
+            <button class="btn small" type="submit">Показать</button>
+        </form>
+        {% if next_date %}
+        <a class="btn small secondary" href="/activity?date={{ next_date }}">→</a>
+        {% endif %}
+        {% if not is_today %}
+        <a class="btn small secondary" href="/activity">Сегодня</a>
+        {% endif %}
+        <strong>{{ day_label }}</strong>
+    </div>
+
+    {% if not has_devices %}
+    <div class="card">
+        <p class="hint" style="margin:0;">
+            Дневник пуст. Добавьте <a href="/activity/devices" style="color:#a5b4fc;">устройство</a>
+            и <a href="/activity/places" style="color:#a5b4fc;">места</a>.
+            Компьютер присылает приложение и заголовок окна, у браузера — вкладку. Телефон присылает только геолокацию.
+        </p>
+    </div>
+    {% elif not has_places %}
+    <div class="card">
+        <p class="hint" style="margin:0;">
+            Мест пока нет. Без них день соберётся, но без подписей «дом» или «кафе».
+            <a href="/activity/places" style="color:#a5b4fc;">Добавить место</a>
+        </p>
+    </div>
+    {% endif %}
+
+    <h2 class="section-title">За компьютером</h2>
+    {% if screen_total %}
+    <div class="total">Около {{ screen_total }}{% if nearby_total %}, из них рядом {{ nearby_total }}{% endif %}</div>
+    {% endif %}
+    {% if presence %}
+        {% for block in presence %}
+        <article class="segment">
+            <div>
+                <div class="segment-time">{{ block.start_label }}–{{ block.end_label }} · {{ block.duration_label }}</div>
+                {% if block.nearby %}<div class="badge nearby">Рядом</div>{% endif %}
+                {% if block.place_label %}
+                <div class="segment-place">{{ block.place_label }}{% if block.place_note %} · {{ block.place_note }}{% endif %}</div>
+                {% endif %}
+            </div>
+            <div>
+                {% for line in block.lines %}
+                <div class="activity-line">
+                    <div class="segment-meta">{{ line.device_name }} · {{ line.platform_label }}</div>
+                    {% if line.private %}
+                    <div class="segment-summary">Личное приложение</div>
+                    {% elif line.browser %}
+                    <div class="segment-summary">{{ line.browser }} · {{ line.title or "вкладка" }}</div>
+                    {% else %}
+                    <div class="segment-summary">{{ line.app_name or "Окно" }}{% if line.title %} · {{ line.title }}{% endif %}</div>
+                    {% endif %}
+                    {% if not block.place_label and line.place_name %}
+                    <div class="segment-place">{{ line.place_name }}{% if line.place_note %} · {{ line.place_note }}{% endif %}</div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </article>
+        {% endfor %}
+    {% else %}
+    <div class="empty-state">За этот день с компьютера ничего не пришло.</div>
+    {% endif %}
+
+    <h2 class="section-title">Где я был</h2>
+    {% if location_segments %}
+        {% for seg in location_segments %}
+        <article class="segment">
+            <div class="segment-time">{{ seg.start_label }}{% if seg.start_label != seg.end_label %}–{{ seg.end_label }}{% endif %} · {{ seg.duration_label }}</div>
+            <div>
+                <div class="segment-meta">{{ seg.device_name }} · {{ seg.platform_label }}</div>
+                {% if seg.place_name %}
+                <div class="segment-place">{{ seg.place_name }}{% if seg.place_note %} · {{ seg.place_note }}{% endif %}</div>
+                {% elif seg.lat is not none %}
+                <div class="segment-meta">{{ "%.5f"|format(seg.lat) }}, {{ "%.5f"|format(seg.lon) }}</div>
+                <a href="/activity/places?lat={{ seg.lat }}&lon={{ seg.lon }}" style="color:#a5b4fc;font-size:13px;">Сохранить как место</a>
+                {% endif %}
+                <div class="segment-summary">{{ seg.summary or "Геолокация" }}</div>
+            </div>
+        </article>
+        {% endfor %}
+    {% else %}
+    <div class="empty-state">За этот день телефон не присылал геолокацию.</div>
+    {% endif %}
+</div>
+{% endblock %}

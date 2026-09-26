@@ -1,0 +1,22 @@
+<div class="header">
+    <div class="header-left">
+        <a href="/" class="back-link">←</a>
+        <h1>📍 Активность</h1>
+    </div>
+    <div class="header-links">
+        <span style="font-size:13px;color:rgba(255,255,255,0.55);">{{ user.name or user.email }}</span>
+    </div>
+</div>
+<div class="content" style="padding-bottom:48px;">
+    <nav class="subnav">
+        <a href="/activity" class="{{ 'active' if page == 'day' else '' }}">День</a>
+        <a href="/activity/places" class="{{ 'active' if page == 'places' else '' }}">Места</a>
+        <a href="/activity/devices" class="{{ 'active' if page == 'devices' else '' }}">Устройства</a>
+        <a href="/activity/settings" class="{{ 'active' if page == 'settings' else '' }}">Настройки</a>
+    </nav>
+    {% if error %}
+    <div class="error">{{ error }}</div>
+    {% endif %}
+    {% if success %}
+    <div class="ok">{{ success }}</div>
+    {% endif %}

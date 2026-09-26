@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Устройства — Активность{% endblock %}
+{% block extra_styles %}
+{% include "activity/_styles.html" %}
+{% endblock %}
+{% block body %}
+{% include "activity/_chrome.html" %}
+
+    <div class="card">
+        <h2 class="section-title">Новое устройство</h2>
+        <p class="hint">Токен открывает запись только в ваш дневник. Храните его на своём устройстве. У каждого пользователя свои устройства и свои токены.</p>
+        <form method="post" action="/activity/devices">
+            <div class="form-group">
+                <label>Название</label>
+                <input type="text" name="name" required maxlength="80" placeholder="MacBook, домашний ПК, iPhone">
+            </div>
+            <div class="form-group">
+                <label>Тип</label>
+                <select name="platform" required>
+                    <option value="mac">Mac</option>
+                    <option value="windows">Windows</option>
+                    <option value="iphone">iPhone</option>
+                </select>
+            </div>
+            <button class="btn" type="submit">Добавить</button>
+        </form>
+    </div>
+
+    {% for device in devices %}
+    <div class="card">
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:12px;">
+            <div>
+                <strong>{{ device.name }}</strong>
+                <span class="badge">{{ device.platform_label }}</span>
+            </div>
+            <div class="segment-meta">{% if device.last_seen %}был {{ device.last_seen }}{% else %}ещё не выходил на связь{% endif %}</div>
+        </div>
+
+        {% if device.platform == 'iphone' %}
+        <p class="hint">iOS не сообщает командам и приложениям, какая программа сейчас на экране. С телефона уходит только геолокация.</p>
+        <div class="token" id="url-{{ device.id }}">{{ base_url }}/activity/api/location/{{ device.token }}</div>
+        <div class="row-actions" style="margin:12px 0;">
+            <button type="button" class="btn small" onclick="navigator.clipboard.writeText(document.getElementById('url-{{ device.id }}').innerText)">Копировать URL</button>
+        </div>
+        <ol class="steps">
+            <li>Откройте Shortcuts и создайте команду.</li>
+            <li>Добавьте действие «Текущее местоположение».</li>
+            <li>Добавьте «Получить содержимое URL»: метод POST, адрес выше.</li>
+            <li>Заголовок <span class="token" style="display:inline;">Content-Type: application/json</span></li>
+            <li>Тело запроса — JSON. В поля latitude и longitude вставьте широту и долготу из предыдущего действия.</li>
+            <li>Автоматизация → Время суток → каждый час → запуск этой команды.</li>
+        </ol>
+        <pre class="token">{"latitude": 0, "longitude": 0}</pre>
+        {% else %}
+        <p class="hint">Клиент лежит в репозитории: <span class="token" style="display:inline;">clients/activity</span>. Это программа на компьютере: она отправляет активное приложение и заголовок окна. У браузера это название вкладки. Если Mac и Windows работают в одно время, день показывает это как «рядом».</p>
+        {% if device.platform == 'windows' %}
+        <pre class="token" id="cmd-{{ device.id }}">cd clients\activity
+py -3 -m pip install -r requirements.txt
+py -3 client.py --server {{ base_url }} --token {{ device.token }}</pre>
+        {% else %}
+        <pre class="token" id="cmd-{{ device.id }}">cd clients/activity
+python3 -m pip install -r requirements.txt
+python3 client.py --server {{ base_url }} --token {{ device.token }}</pre>
+        <p class="hint">На Mac клиенту нужно разрешение «Универсальный доступ» для Terminal или iTerm, чтобы прочитать название окна. Запись экрана не нужна.</p>
+        {% endif %}
+        <p class="hint">Если скопированный адрес начинается с localhost, подставьте внешний домен сервера.</p>
+        <div class="row-actions" style="margin-top:12px;">
+            <button type="button" class="btn small" onclick="navigator.clipboard.writeText(document.getElementById('cmd-{{ device.id }}').innerText)">Копировать команду</button>
+        </div>
+        {% endif %}
+
+        <form method="post" action="/activity/devices/{{ device.id }}/rename" class="row-actions" style="margin-top:16px;">
+            <input type="text" name="name" value="{{ device.name }}" maxlength="80" style="flex:1;min-width:160px;padding:8px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#fff;">
+            <button class="btn small secondary" type="submit">Переименовать</button>
+        </form>
+        <div class="row-actions" style="margin-top:10px;">
+            <form method="post" action="/activity/devices/{{ device.id }}/token" onsubmit="return confirm('Старый токен перестанет работать. Обновить?');">
+                <button class="btn small secondary" type="submit">Новый токен</button>
+            </form>
+            <form method="post" action="/activity/devices/{{ device.id }}/delete" onsubmit="return confirm('Удалить устройство и его события?');">
+                <button class="btn small danger" type="submit">Удалить</button>
+            </form>
+        </div>
+    </div>
+    {% else %}
+    <div class="empty-state">Устройств пока нет.</div>
+    {% endfor %}
+</div>
+{% endblock %}

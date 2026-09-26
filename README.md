@@ -7,6 +7,7 @@ FastAPI с разными проектами
 - **Dashboard** (`/`) — главная страница с плитками сервисов, админка
 - **Finance** (`/finance`) — учет личных финансов с webhook для iOS Shortcuts
 - **Weather** (`/weather`) — мониторинг датчиков Yandex Smart Home
+- **Активность** (`/activity`) — личный дневник: снимки с Mac/Windows и геолокация с iPhone. Данные изолированы по пользователю
 
 ## Быстрый старт
 
@@ -50,7 +51,8 @@ zibzibzib_projects/
 │   ├── routers/
 │   │   ├── dashboard.py  # Dashboard & admin
 │   │   ├── finance.py    # Finance tracker
-│   │   └── weather.py    # Weather monitoring
+│   │   ├── weather.py    # Weather monitoring
+│   │   └── activity.py   # Personal activity diary
 │   ├── services/
 │   │   ├── yandex_client.py
 │   │   └── scheduler.py
@@ -167,3 +169,10 @@ server {
 | ADMIN_PASSWORD | Начальный пароль админа | admin123 |
 | YANDEX_TOKEN | OAuth токен Yandex Smart Home | - |
 | POLL_INTERVAL_SECONDS | Интервал опроса датчиков | 60 |
+| ACTIVITY_DIR | Каталог данных активности | ./data/activity |
+
+## Активность
+
+Вкладка видна администратору сразу. Остальным её выдают в матрице доступа. Места, устройства и события одного пользователя не читаются другим, в том числе администратором.
+
+Компьютер: клиент `clients/activity/client.py` (Mac или Windows) отправляет приложение и заголовок окна. У браузера это открытая вкладка. Если оба компьютера активны одновременно, этот отрезок дня помечается «рядом». Телефон: Shortcut на `POST /activity/api/location/{token}` только с координатами. iOS не отдаёт имя открытого приложения.

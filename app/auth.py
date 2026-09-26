@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import Request, HTTPException
 from passlib.context import CryptContext
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.config import SECRET_KEY, ADMIN_EMAIL, ADMIN_PASSWORD
 from app.database import (
@@ -98,12 +98,35 @@ async def update_user_password(user_id: int, new_password: str):
 
 
 async def delete_user(user_id: int):
+    from app.services.activity import delete_user_activity_data
+
+    await delete_user_activity_data(user_id)
     async with async_session() as session:
         result = await session.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()
         if user:
             await session.delete(user)
             await session.commit()
+
+
+async def ensure_activity_service():
+    """Register the activity tile on existing databases as well as fresh ones."""
+    async with async_session() as session:
+        result = await session.execute(select(Service).where(Service.slug == "activity"))
+        if result.scalar_one_or_none():
+            return
+        max_order = await session.scalar(select(func.max(Service.order)))
+        session.add(
+            Service(
+                name="Активность",
+                slug="activity",
+                route="/activity",
+                icon="📍",
+                description="Где я и чем занят. Дневник виден только вам.",
+                order=(max_order or 0) + 1,
+            )
+        )
+        await session.commit()
 
 
 async def get_all_users() -> list[User]:
