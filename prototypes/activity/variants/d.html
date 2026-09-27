@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Вариант D — сумма и лента</title>
+  <link rel="stylesheet" href="variants.css">
+</head>
+<body>
+  <header class="top"><h1>Активность</h1></header>
+  <div class="wrap">
+    <nav class="switch">
+      <a href="a.html">A · Сумма</a>
+      <a href="c.html">C · Лента</a>
+      <a class="on" href="d.html">D · Сумма и лента</a>
+      <a href="e.html">E · Сумма на часах</a>
+    </nav>
+    <section class="card">
+      <div class="kicker">Вариант D</div>
+      <h2>Сумма и лента</h2>
+      <p class="rule">Сверху, как в A: сколько времени на что. Сразу под списком, как в C: какой компьютер это держал. Агент на ленте полосками и в сумму не входит.</p>
+      <div class="total">
+        <strong>2 ч 1 мин</strong>
+        <span>ты за экраном · агент ещё 4 ч 9 мин</span>
+      </div>
+      <div class="donut-wrap">
+        <div class="donut" style="background: conic-gradient(#6d4aff 0 67%, #1a73e8 67% 100%)"></div>
+      </div>
+      <div class="row">
+        <div class="head">
+          <span class="dot" style="background:#6d4aff"></span>
+          <span class="name">Компьютерные игры</span>
+          <span class="time">1 ч 21 мин</span>
+          <span class="pct">67%</span>
+        </div>
+        <div class="track"><div class="fill" style="width:67%;background:#6d4aff"></div></div>
+        <ul class="sub"><li><span>Dota 2 · PC</span><time>15:46–17:07</time></li></ul>
+      </div>
+      <div class="row">
+        <div class="head">
+          <span class="dot" style="background:#1a73e8"></span>
+          <span class="name">Работа</span>
+          <span class="time">40 мин</span>
+          <span class="pct">33%</span>
+        </div>
+        <div class="track"><div class="fill" style="width:33%;background:#1a73e8"></div></div>
+        <ul class="sub">
+          <li><span>Cursor · Mac</span><time>17:21–18:11</time></li>
+          <li class="muted"><span>мельком: Safari, Spotify, Telegram</span><time>3 мин внутри</time></li>
+        </ul>
+      </div>
+      <div class="lanes" style="margin-top:18px">
+        <div class="hours"><span>15:00</span><span>17:00</span><span>19:00</span><span>21:00</span></div>
+        <div class="lane">
+          <div class="lane-name">Mac</div>
+          <div class="lane-track">
+            <div class="block striped" style="left:14.3%;width:16.7%">Агент</div>
+            <div class="block" style="left:33%;width:11.9%;background:#1a73e8">Cursor</div>
+            <span class="blip" style="left:40%"></span>
+            <span class="blip" style="left:41.2%"></span>
+            <span class="blip" style="left:42.4%"></span>
+            <div class="block striped" style="left:46.7%;width:47.4%">Агент</div>
+          </div>
+        </div>
+        <div class="lane">
+          <div class="lane-name">PC</div>
+          <div class="lane-track">
+            <div class="block" style="left:11%;width:19.3%;background:#6d4aff">Dota 2</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</body>
+</html>
