@@ -42,10 +42,40 @@
     <div class="card">
         <div class="spend-total">
             <strong>{{ breakdown.total_label }}</strong>
-            <span>за экраном</span>
+            <span>ты за экраном{% if breakdown.agent_label %} · агент ещё {{ breakdown.agent_label }}{% endif %}</span>
         </div>
-        <div class="donut-wrap">
-            <div class="donut" style="background: {{ breakdown.donut }}"></div>
+        <div class="tl-hours">
+            {% for hour in breakdown.hours %}
+            <span style="left: {{ hour.left }}%">{{ hour.label }}</span>
+            {% endfor %}
+        </div>
+        <div class="ribbon-row">
+            <div class="ribbon-name">Ты</div>
+            <div class="lane-track">
+                {% for block in breakdown.you %}
+                <div class="lane-block" style="left: {{ block.left }}%; width: {{ block.width }}%; background: {{ block.color }}">{{ block.name }}</div>
+                {% endfor %}
+                {% for dot in breakdown.dots %}
+                <span class="lane-blip" style="left: {{ dot.left }}%"></span>
+                {% endfor %}
+            </div>
+        </div>
+        {% if breakdown.agent_segments %}
+        <div class="ribbon-row">
+            <div class="ribbon-name">Агент</div>
+            <div class="lane-track">
+                {% for block in breakdown.agent_segments %}
+                <div class="lane-block striped" style="left: {{ block.left }}%; width: {{ block.width }}%">{{ block.name }}</div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    <div class="card">
+        <div class="tl-hours" style="margin-left:0">
+            {% for hour in breakdown.hours %}
+            <span style="left: {{ hour.left }}%">{{ hour.label }}</span>
+            {% endfor %}
         </div>
         {% for row in breakdown.rows %}
         <details class="spend-row">
@@ -57,7 +87,38 @@
                     <span class="spend-pct">{{ row.percent }}</span>
                     <span class="spend-chevron">›</span>
                 </div>
-                <div class="spend-track"><div class="spend-fill" style="width: {{ row.width }}%; background: {{ row.color }}"></div></div>
+                <div class="clock">
+                    {% for block in row.segments %}
+                    <div class="lane-block" style="left: {{ block.left }}%; width: {{ block.width }}%; background: {{ block.color }}">{{ block.name }}</div>
+                    {% endfor %}
+                    {% for dot in row.dots %}
+                    <span class="lane-blip" style="left: {{ dot.left }}%"></span>
+                    {% endfor %}
+                </div>
+            </summary>
+            <ul class="intervals">
+                {% for item in row.intervals %}
+                <li class="{{ 'interval-muted' if item.muted else '' }}"><span>{{ item.name }}</span><time>{{ item.start }}–{{ item.end }} · {{ item.time_label }}</time></li>
+                {% endfor %}
+            </ul>
+        </details>
+        {% endfor %}
+        {% if breakdown.agent_row %}
+        {% set row = breakdown.agent_row %}
+        <details class="spend-row">
+            <summary>
+                <div class="spend-head">
+                    <span class="spend-dot" style="background: {{ row.color }}"></span>
+                    <span class="spend-name">{{ row.name }}</span>
+                    <span class="spend-time">{{ row.time_label }}</span>
+                    <span class="spend-pct">{{ row.percent }}</span>
+                    <span class="spend-chevron">›</span>
+                </div>
+                <div class="clock">
+                    {% for block in row.segments %}
+                    <div class="lane-block striped" style="left: {{ block.left }}%; width: {{ block.width }}%">{{ block.name }}</div>
+                    {% endfor %}
+                </div>
             </summary>
             <ul class="intervals">
                 {% for item in row.intervals %}
@@ -65,7 +126,7 @@
                 {% endfor %}
             </ul>
         </details>
-        {% endfor %}
+        {% endif %}
     </div>
     {% else %}
     <h2 class="section-title">За компьютером</h2>
