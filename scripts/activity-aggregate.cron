@@ -1,0 +1,2 @@
+# Not installed. One local day, once an hour, on the host (Codex is not in the container).
+# 0 * * * * cd /root/zibzibzib_projects && /usr/bin/python3 scripts/activity_aggregate.py >> /root/zibzibzib_projects/data/activity-aggregate.log 2>&1
