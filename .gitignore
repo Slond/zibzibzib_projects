@@ -2,6 +2,7 @@
 data/
 *.db
 prototypes/activity/preview.html
+prototypes/activity/day.js
 
 # Python
 __pycache__/
