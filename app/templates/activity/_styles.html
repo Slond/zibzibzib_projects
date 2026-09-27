@@ -44,6 +44,51 @@
     padding: 8px 10px;
 }
 .section-title { font-size: 16px; margin: 8px 0 12px; }
+.spend-total { text-align: center; margin: 0 0 16px; }
+.spend-total strong { display: block; font-size: 28px; font-weight: 650; letter-spacing: -0.03em; }
+.spend-total span { color: rgba(255,255,255,0.45); font-size: 13px; }
+.donut-wrap { display: flex; justify-content: center; margin-bottom: 8px; }
+.donut { width: 196px; height: 196px; border-radius: 50%; position: relative; }
+.donut::after {
+    content: "";
+    position: absolute;
+    inset: 42px;
+    border-radius: 50%;
+    background: #1a1a2e;
+}
+.spend-row { border-bottom: 1px solid rgba(255,255,255,0.06); }
+.spend-row:last-child { border-bottom: none; }
+.spend-row summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 14px 0 8px;
+}
+.spend-row summary::-webkit-details-marker { display: none; }
+.spend-head {
+    display: grid;
+    grid-template-columns: 14px 1fr auto auto 16px;
+    gap: 10px;
+    align-items: center;
+}
+.spend-dot { width: 10px; height: 10px; border-radius: 50%; }
+.spend-name { font-size: 15px; font-weight: 600; }
+.spend-time { font-size: 14px; font-variant-numeric: tabular-nums; }
+.spend-pct { width: 42px; text-align: right; font-size: 13px; color: rgba(255,255,255,0.45); font-variant-numeric: tabular-nums; }
+.spend-chevron { color: rgba(255,255,255,0.35); font-size: 12px; }
+.spend-row[open] .spend-chevron { transform: rotate(90deg); display: inline-block; }
+.spend-track { margin: 0 0 10px 24px; height: 6px; border-radius: 99px; background: rgba(255,255,255,0.08); overflow: hidden; }
+.spend-fill { height: 100%; border-radius: 99px; }
+.intervals { list-style: none; margin: 0 0 8px 24px; padding: 0; }
+.intervals li {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 7px 0;
+    font-size: 13px;
+    color: rgba(255,255,255,0.78);
+    border-top: 1px solid rgba(255,255,255,0.04);
+}
+.intervals time { color: rgba(255,255,255,0.45); font-variant-numeric: tabular-nums; flex: none; }
 .total { color: rgba(255,255,255,0.55); font-size: 13px; margin: -6px 0 14px; }
 .segment {
     background: rgba(255,255,255,0.05);

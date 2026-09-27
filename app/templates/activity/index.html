@@ -38,6 +38,36 @@
     </div>
     {% endif %}
 
+    {% if breakdown %}
+    <div class="card">
+        <div class="spend-total">
+            <strong>{{ breakdown.total_label }}</strong>
+            <span>за экраном</span>
+        </div>
+        <div class="donut-wrap">
+            <div class="donut" style="background: {{ breakdown.donut }}"></div>
+        </div>
+        {% for row in breakdown.rows %}
+        <details class="spend-row">
+            <summary>
+                <div class="spend-head">
+                    <span class="spend-dot" style="background: {{ row.color }}"></span>
+                    <span class="spend-name">{{ row.name }}</span>
+                    <span class="spend-time">{{ row.time_label }}</span>
+                    <span class="spend-pct">{{ row.percent }}</span>
+                    <span class="spend-chevron">›</span>
+                </div>
+                <div class="spend-track"><div class="spend-fill" style="width: {{ row.width }}%; background: {{ row.color }}"></div></div>
+            </summary>
+            <ul class="intervals">
+                {% for item in row.intervals %}
+                <li><span>{{ item.name }}</span><time>{{ item.start }}–{{ item.end }} · {{ item.time_label }}</time></li>
+                {% endfor %}
+            </ul>
+        </details>
+        {% endfor %}
+    </div>
+    {% else %}
     <h2 class="section-title">За компьютером</h2>
     {% if screen_total %}
     <div class="total">Около {{ screen_total }}{% if nearby_total %}, из них рядом {{ nearby_total }}{% endif %}</div>
@@ -73,6 +103,7 @@
         {% endfor %}
     {% else %}
     <div class="empty-state">За этот день с компьютера ничего не пришло.</div>
+    {% endif %}
     {% endif %}
 
     <h2 class="section-title">Где я был</h2>
