@@ -8,7 +8,7 @@
 
     <div class="card">
         <h2 class="section-title">{% if form and form.id %}Изменить место{% else %}Новое место{% endif %}</h2>
-        <p class="hint">Wi‑Fi нужен для Mac и Windows: по имени сети видно, за каким компьютером вы дома. Координаты нужны для iPhone. У одного места можно указать оба.</p>
+        <p class="hint">Wi‑Fi нужен для Mac и Windows: по имени сети видно, за каким компьютером вы дома. Координаты нужны для iPhone. У одного места можно указать оба. При сохранении имя получат и прошлые точки без подписи, если они попадают в это место. Точки, у которых имя уже есть, не меняются.</p>
         <form method="post" action="/activity/places">
             <input type="hidden" name="place_id" value="{{ form.id if form else '' }}">
             <div class="form-group">
@@ -33,7 +33,7 @@
             </div>
             <div class="form-group">
                 <label>Радиус, метры</label>
-                <input type="text" name="radius_m" value="{{ form.radius_m if form and form.radius_m is not none else '' }}" placeholder="150">
+                <input type="text" name="radius_m" value="{{ form.radius_m if form and form.radius_m is not none else '' }}" placeholder="10">
             </div>
             {% if last_fix %}
             <button type="button" class="btn small secondary" style="margin-bottom:16px;" onclick="document.getElementById('place-lat').value='{{ last_fix.lat }}';document.getElementById('place-lon').value='{{ last_fix.lon }}';">

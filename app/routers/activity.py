@@ -247,7 +247,7 @@ async def activity_places(request: Request, edit: int | None = None, lat: str | 
             "wifi_ssid": "",
             "latitude": lat or "",
             "longitude": lon or "",
-            "radius_m": 150,
+            "radius_m": 10,
         }
     return templates.TemplateResponse(
         request=request,

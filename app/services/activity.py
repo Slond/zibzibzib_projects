@@ -21,6 +21,8 @@ from app.database import (
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_RADIUS_M = 10
+
 DEFAULT_SKIP_APPS = "\n".join(
     [
         "1Password",
@@ -205,7 +207,7 @@ def match_place(places: list, wifi_ssid: str | None, lat: float | None, lon: flo
     for place in places:
         if place.latitude is None or place.longitude is None:
             continue
-        radius = place.radius_m or 150
+        radius = place.radius_m or DEFAULT_RADIUS_M
         distance = haversine_m(lat, lon, place.latitude, place.longitude)
         if distance <= radius and (best_distance is None or distance < best_distance):
             best = place
@@ -231,7 +233,7 @@ def clean_window_title(title: str | None) -> str | None:
 
 def screen_summary(app_name: str | None, window_title: str | None, sensitive: bool) -> str:
     if sensitive:
-        return "Личное приложение"
+        return app_name or "Личное приложение"
     if browser_name(app_name) and window_title:
         return window_title[:120]
     if app_name and window_title and window_title.casefold() != app_name.casefold():
@@ -638,6 +640,8 @@ async def build_day(user_id: int, day: date) -> dict:
     async with async_session() as session:
         settings = await get_or_create_settings(session, user_id)
         await session.commit()
+        await assign_unnamed_places(session, user_id)
+        await session.commit()
         tz = zone_or_default(settings.timezone)
         start, end = local_day_bounds(day, tz)
         result = await session.execute(
@@ -787,14 +791,14 @@ async def upsert_place(
     if lat is not None:
         raw_radius = (radius_m or "").strip()
         if not raw_radius:
-            radius = 150
+            radius = DEFAULT_RADIUS_M
         else:
             try:
                 radius = int(float(raw_radius.replace(",", ".")))
             except ValueError:
                 return "Радиус должен быть числом"
-            if radius < 30 or radius > 20000:
-                return "Радиус от 30 до 20000 метров"
+            if radius < 5 or radius > 20000:
+                return "Радиус от 5 до 20000 метров"
     if not wifi and lat is None:
         return "Укажите сеть Wi‑Fi или координаты"
 
@@ -812,8 +816,30 @@ async def upsert_place(
         place.latitude = lat
         place.longitude = lon
         place.radius_m = radius
+        await session.flush()
+        await assign_unnamed_places(session, user_id)
         await session.commit()
     return None
+
+
+async def assign_unnamed_places(session, user_id: int) -> None:
+    """Name past points that have no place yet. Leave points that already have one."""
+    places = await _places_for(session, user_id)
+    if not places:
+        return
+    result = await session.execute(
+        select(ActivityEvent).where(
+            ActivityEvent.user_id == user_id,
+            ActivityEvent.place_id.is_(None),
+        )
+    )
+    for event in result.scalars().all():
+        place = match_place(places, event.wifi_ssid, event.latitude, event.longitude)
+        if not place:
+            continue
+        event.place_id = place.id
+        if event.kind == "location":
+            event.summary = location_summary(place)
 
 
 async def delete_place(user_id: int, place_id: int) -> bool:

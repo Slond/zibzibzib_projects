@@ -57,7 +57,7 @@
                 <div class="activity-line">
                     <div class="segment-meta">{{ line.device_name }} · {{ line.platform_label }}</div>
                     {% if line.private %}
-                    <div class="segment-summary">Личное приложение</div>
+                    <div class="segment-summary">{{ line.app_name or "Личное приложение" }}</div>
                     {% elif line.browser %}
                     <div class="segment-summary">{{ line.browser }} · {{ line.title or "вкладка" }}</div>
                     {% else %}

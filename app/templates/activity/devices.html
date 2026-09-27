@@ -55,18 +55,24 @@
         <p class="hint">Одна команда скачивает клиент в свою папку и включает его при входе в систему. До входа окон ещё нет, поэтому старт привязан к рабочему столу, а не к включению питания. После смены токена вставьте команду ещё раз. Если адрес начинается с localhost, подставьте внешний домен.</p>
         {% if device.platform == 'windows' %}
         <pre class="token" id="cmd-{{ device.id }}">set DIR=%APPDATA%\activity-client
-mkdir "%DIR%"
+mkdir "%DIR%" 2>nul
 curl.exe -fsSL "{{ base_url }}/activity/api/client/{{ device.token }}" -o "%DIR%\client.py"
 curl.exe -fsSL "{{ base_url }}/activity/api/client/{{ device.token }}/requirements.txt" -o "%DIR%\requirements.txt"
-py -3 -m venv "%DIR%\venv"
-"%DIR%\venv\Scripts\python.exe" -m pip install -r "%DIR%\requirements.txt"
-(
-echo @echo off
-echo "%DIR%\venv\Scripts\python.exe" "%DIR%\client.py" --server {{ base_url }} --token {{ device.token }}
-) > "%DIR%\start.cmd"
+set "PY="
+py -3 -c "import sys" >nul 2>&1
+if not errorlevel 1 set "PY=py -3"
+if not defined PY python -c "import sys" >nul 2>&1
+if not defined PY if not errorlevel 1 set "PY=python"
+if not defined PY echo Python 3 не найден. Скачайте его с https://www.python.org/downloads/windows/ и включите Add python.exe to PATH. Закройте cmd и вставьте команду снова.
+if defined PY %PY% -m venv "%DIR%\venv"
+if exist "%DIR%\venv\Scripts\python.exe" "%DIR%\venv\Scripts\python.exe" -m pip install -r "%DIR%\requirements.txt"
+if exist "%DIR%\venv\Scripts\python.exe" (
+> "%DIR%\start.cmd" echo @echo off
+>> "%DIR%\start.cmd" echo "%DIR%\venv\Scripts\python.exe" "%DIR%\client.py" --server {{ base_url }} --token {{ device.token }}
 schtasks /Create /F /SC ONLOGON /TN ActivityClient /TR "\"%DIR%\start.cmd\""
-"%DIR%\start.cmd"</pre>
-        <p class="hint">Вставьте это в cmd. Клиент стартует при следующем входе и сразу после этих команд.</p>
+call "%DIR%\start.cmd"
+)</pre>
+        <p class="hint">Вставьте это в cmd целиком. Если Python ещё не стоит, команда остановится и напишет, откуда его скачать. Клиент стартует при следующем входе и сразу после этих команд.</p>
         {% else %}
         <pre class="token" id="cmd-{{ device.id }}">set -euo pipefail
 DIR="$HOME/Library/Application Support/activity-client"
