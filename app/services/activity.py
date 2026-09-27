@@ -1,6 +1,8 @@
 """Per-user activity diary: window titles, phone locations, nearby computers."""
+import json
 import logging
 import math
+import re
 import shutil
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
@@ -273,6 +275,107 @@ def remove_screenshot(rel: str | None):
     path = screenshot_file(rel)
     if path:
         path.unlink(missing_ok=True)
+
+
+_HEX_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
+_CLOCK = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
+
+
+def breakdown_dir() -> Path:
+    return activity_root().parent / "activity-days"
+
+
+def _clock_minutes(value: str) -> int | None:
+    if not isinstance(value, str) or not _CLOCK.match(value):
+        return None
+    hour, minute = value.split(":")
+    return int(hour) * 60 + int(minute)
+
+
+def _share_labels(minutes: list[int], total: int) -> list[str]:
+    raw = [(item / total) * 100 if total else 0 for item in minutes]
+    rounded = [round(item) for item in raw]
+    drift = 100 - sum(rounded)
+    if minutes and drift:
+        index = max(range(len(raw)), key=lambda i: raw[i])
+        rounded[index] += drift
+    labels = []
+    for value, spent in zip(rounded, minutes):
+        if value == 0 and spent > 0:
+            labels.append("<1%")
+        else:
+            labels.append(f"{value}%")
+    return labels
+
+
+def load_breakdown(user_id: int, day: date) -> dict | None:
+    """Read the Codex day file for this user. Missing or broken files stay empty."""
+    root = breakdown_dir().resolve()
+    path = (root / str(int(user_id)) / f"{day.isoformat()}.json").resolve()
+    if root not in path.parents or not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    categories = {
+        item.get("id"): item
+        for item in payload.get("categories") or []
+        if isinstance(item, dict) and item.get("id") and item.get("name")
+    }
+    grouped: dict[str, dict] = {}
+    for block in payload.get("blocks") or []:
+        if not isinstance(block, dict):
+            continue
+        category = categories.get(block.get("category"))
+        if not category:
+            continue
+        bucket = grouped.setdefault(
+            block["category"],
+            {
+                "name": str(category["name"]),
+                "color": category["color"] if _HEX_COLOR.match(str(category.get("color") or "")) else "#4361ee",
+                "minutes": 0,
+                "intervals": [],
+            },
+        )
+        for item in block.get("items") or []:
+            if not isinstance(item, dict):
+                continue
+            start = _clock_minutes(str(item.get("start") or ""))
+            end = _clock_minutes(str(item.get("end") or ""))
+            if start is None or end is None or end <= start:
+                continue
+            spent = end - start
+            bucket["minutes"] += spent
+            bucket["intervals"].append(
+                {
+                    "name": str(item.get("name") or "Занятие"),
+                    "start": item["start"],
+                    "end": item["end"],
+                    "time_label": fmt_duration(spent * 60),
+                }
+            )
+    rows = [row for row in grouped.values() if row["minutes"] > 0]
+    rows.sort(key=lambda row: row["minutes"], reverse=True)
+    total = sum(row["minutes"] for row in rows)
+    if not total:
+        return None
+    labels = _share_labels([row["minutes"] for row in rows], total)
+    cursor = 0.0
+    slices = []
+    for row, label in zip(rows, labels):
+        width = row["minutes"] / total * 100
+        slices.append(f"{row['color']} {cursor:.4f}% {cursor + width:.4f}%")
+        cursor += width
+        row["time_label"] = fmt_duration(row["minutes"] * 60)
+        row["percent"] = label
+        row["width"] = width
+    return {
+        "total_label": fmt_duration(total * 60),
+        "donut": "conic-gradient(" + ", ".join(slices) + ")",
+        "rows": rows,
+    }
 
 
 def fmt_duration(seconds: float) -> str:

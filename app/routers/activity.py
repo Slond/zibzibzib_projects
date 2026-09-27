@@ -19,6 +19,7 @@ from app.services.activity import (
     latest_fix,
     list_devices,
     list_places,
+    load_breakdown,
     record_location,
     record_screen,
     regenerate_device_token,
@@ -224,6 +225,7 @@ async def activity_index(request: Request, date: str | None = None):
     prefs = await settings_view(user.id)
     day = parse_day(date, prefs["timezone"])
     view = await build_day(user.id, day)
+    view["breakdown"] = load_breakdown(user.id, day)
     return templates.TemplateResponse(
         request=request,
         name="activity/index.html",
