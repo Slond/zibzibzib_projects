@@ -1,6 +1,7 @@
 # Data
 data/
 *.db
+prototypes/activity/preview.html
 
 # Python
 __pycache__/
