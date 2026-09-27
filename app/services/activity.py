@@ -308,6 +308,68 @@ def _share_labels(minutes: list[int], total: int) -> list[str]:
     return labels
 
 
+def _span_ends(blocks: list, agent: list) -> tuple[int, int] | None:
+    points: list[int] = []
+    for block in blocks:
+        for key in ("start", "end"):
+            value = _clock_minutes(str(block.get(key) or ""))
+            if value is not None:
+                points.append(value)
+        for extra in list(block.get("items") or []) + list(block.get("blips") or []):
+            if not isinstance(extra, dict):
+                continue
+            for key in ("start", "end"):
+                value = _clock_minutes(str(extra.get(key) or ""))
+                if value is not None:
+                    points.append(value)
+    for span in agent:
+        for key in ("start", "end"):
+            value = _clock_minutes(str(span.get(key) or ""))
+            if value is not None:
+                points.append(value)
+    if len(points) < 2:
+        return None
+    origin = min(points) // 60 * 60
+    end = max(points)
+    if end % 60:
+        end = (end // 60 + 1) * 60
+    if end <= origin:
+        end = origin + 60
+    return origin, min(end, 24 * 60)
+
+
+def _tick_labels(origin: int, end: int) -> list[dict]:
+    span = max(end - origin, 1)
+    step = 60 if span <= 8 * 60 else 120 if span <= 16 * 60 else 180
+    ticks = []
+    cursor = origin
+    while cursor < end:
+        ticks.append(cursor)
+        cursor += step
+    if not ticks or end - ticks[-1] >= step * 0.45:
+        ticks.append(end)
+    else:
+        ticks[-1] = end
+    labels = []
+    for tick in ticks:
+        if tick >= 24 * 60:
+            label = "24:00"
+        else:
+            label = f"{tick // 60:02d}:{tick % 60:02d}"
+        labels.append({"label": label, "left": (tick - origin) / span * 100})
+    return labels
+
+
+def _box(origin: int, span: int, start: int, end: int) -> tuple[float, float]:
+    left = (start - origin) / span * 100
+    width = (end - start) / span * 100
+    if left < 0:
+        width += left
+        left = 0
+    width = max(min(width, 100 - left), 0.4)
+    return left, width
+
+
 def load_breakdown(user_id: int, day: date) -> dict | None:
     """Read the Codex day file for this user. Missing or broken files stay empty."""
     root = breakdown_dir().resolve()
@@ -323,37 +385,77 @@ def load_breakdown(user_id: int, day: date) -> dict | None:
         for item in payload.get("categories") or []
         if isinstance(item, dict) and item.get("id") and item.get("name")
     }
+    blocks = [block for block in payload.get("blocks") or [] if isinstance(block, dict)]
+    agent = [span for span in payload.get("agent") or [] if isinstance(span, dict)]
+    bounds = _span_ends(blocks, agent)
+    if not bounds:
+        return None
+    origin, end = bounds
+    span = max(end - origin, 1)
     grouped: dict[str, dict] = {}
-    for block in payload.get("blocks") or []:
-        if not isinstance(block, dict):
-            continue
+    you: list[dict] = []
+    dots: list[dict] = []
+    for block in blocks:
         category = categories.get(block.get("category"))
         if not category:
             continue
+        color = category["color"] if _HEX_COLOR.match(str(category.get("color") or "")) else "#4361ee"
+        device = str(block.get("device") or "").strip()
         bucket = grouped.setdefault(
             block["category"],
             {
                 "name": str(category["name"]),
-                "color": category["color"] if _HEX_COLOR.match(str(category.get("color") or "")) else "#4361ee",
+                "color": color,
                 "minutes": 0,
+                "devices": set(),
+                "segments": [],
+                "dots": [],
                 "intervals": [],
+                "outside": False,
             },
         )
+        if device:
+            bucket["devices"].add(device)
         for item in block.get("items") or []:
             if not isinstance(item, dict):
                 continue
             start = _clock_minutes(str(item.get("start") or ""))
-            end = _clock_minutes(str(item.get("end") or ""))
-            if start is None or end is None or end <= start:
+            stop = _clock_minutes(str(item.get("end") or ""))
+            if start is None or stop is None or stop <= start:
                 continue
-            spent = end - start
-            bucket["minutes"] += spent
+            left, width = _box(origin, span, start, stop)
+            name = str(item.get("name") or "Занятие")
+            bucket["minutes"] += stop - start
+            bucket["segments"].append({"name": name, "left": left, "width": width, "color": color, "striped": False})
             bucket["intervals"].append(
                 {
-                    "name": str(item.get("name") or "Занятие"),
+                    "name": f"{name} · {device}" if device else name,
                     "start": item["start"],
                     "end": item["end"],
-                    "time_label": fmt_duration(spent * 60),
+                    "time_label": fmt_duration((stop - start) * 60),
+                    "muted": False,
+                }
+            )
+            you.append({"name": name, "left": left, "width": width, "color": color, "striped": False})
+        for blip in block.get("blips") or []:
+            if not isinstance(blip, dict):
+                continue
+            start = _clock_minutes(str(blip.get("start") or ""))
+            stop = _clock_minutes(str(blip.get("end") or ""))
+            if start is None or stop is None or stop <= start:
+                continue
+            left, _width = _box(origin, span, start, stop)
+            name = str(blip.get("name") or "Заход")
+            dot = {"left": left}
+            bucket["dots"].append(dot)
+            dots.append(dot)
+            bucket["intervals"].append(
+                {
+                    "name": f"мельком: {name}",
+                    "start": blip["start"],
+                    "end": blip["end"],
+                    "time_label": fmt_duration((stop - start) * 60),
+                    "muted": True,
                 }
             )
     rows = [row for row in grouped.values() if row["minutes"] > 0]
@@ -362,19 +464,64 @@ def load_breakdown(user_id: int, day: date) -> dict | None:
     if not total:
         return None
     labels = _share_labels([row["minutes"] for row in rows], total)
-    cursor = 0.0
-    slices = []
     for row, label in zip(rows, labels):
-        width = row["minutes"] / total * 100
-        slices.append(f"{row['color']} {cursor:.4f}% {cursor + width:.4f}%")
-        cursor += width
+        devices = row.pop("devices")
+        if len(devices) == 1:
+            row["name"] = f"{row['name']} · {next(iter(devices))}"
         row["time_label"] = fmt_duration(row["minutes"] * 60)
         row["percent"] = label
-        row["width"] = width
+    agent_segments = []
+    agent_minutes = 0
+    agent_intervals = []
+    agent_devices = set()
+    for span_item in agent:
+        start = _clock_minutes(str(span_item.get("start") or ""))
+        stop = _clock_minutes(str(span_item.get("end") or ""))
+        if start is None or stop is None or stop <= start:
+            continue
+        device = str(span_item.get("device") or "").strip()
+        if device:
+            agent_devices.add(device)
+        note = str(span_item.get("note") or "Агент")
+        left, width = _box(origin, span, start, stop)
+        agent_minutes += stop - start
+        agent_segments.append({"name": device or "Агент", "left": left, "width": width, "striped": True})
+        agent_intervals.append(
+            {
+                "name": note,
+                "start": span_item["start"],
+                "end": span_item["end"],
+                "time_label": fmt_duration((stop - start) * 60),
+                "muted": False,
+            }
+        )
+    agent_row = None
+    if agent_segments:
+        title = "Агент"
+        if len(agent_devices) == 1:
+            title = f"Агент · {next(iter(agent_devices))}"
+        agent_row = {
+            "name": title,
+            "color": "#a78bfa",
+            "time_label": fmt_duration(agent_minutes * 60),
+            "percent": "вне",
+            "segments": [
+                {**segment, "color": "#7c3aed", "striped": True}
+                for segment in agent_segments
+            ],
+            "dots": [],
+            "intervals": agent_intervals,
+            "outside": True,
+        }
     return {
         "total_label": fmt_duration(total * 60),
-        "donut": "conic-gradient(" + ", ".join(slices) + ")",
+        "agent_label": fmt_duration(agent_minutes * 60) if agent_row else None,
+        "hours": _tick_labels(origin, end),
+        "you": you,
+        "dots": dots,
+        "agent_segments": agent_segments,
         "rows": rows,
+        "agent_row": agent_row,
     }
 
 

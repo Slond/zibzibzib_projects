@@ -47,15 +47,67 @@
 .spend-total { text-align: center; margin: 0 0 16px; }
 .spend-total strong { display: block; font-size: 28px; font-weight: 650; letter-spacing: -0.03em; }
 .spend-total span { color: rgba(255,255,255,0.45); font-size: 13px; }
-.donut-wrap { display: flex; justify-content: center; margin-bottom: 8px; }
-.donut { width: 196px; height: 196px; border-radius: 50%; position: relative; }
-.donut::after {
-    content: "";
+.tl-hours { position: relative; height: 16px; margin: 0 0 4px 60px; }
+.tl-hours span {
     position: absolute;
-    inset: 42px;
-    border-radius: 50%;
-    background: #1a1a2e;
+    top: 0;
+    font-size: 11px;
+    color: rgba(255,255,255,0.35);
+    transform: translateX(-50%);
+    white-space: nowrap;
 }
+.tl-hours span:first-child { transform: none; }
+.tl-hours span:last-child { transform: translateX(-100%); }
+.ribbon-row {
+    display: grid;
+    grid-template-columns: 52px 1fr;
+    gap: 8px;
+    align-items: center;
+    margin-top: 8px;
+}
+.ribbon-name { font-size: 12px; color: rgba(255,255,255,0.5); }
+.lane-track {
+    position: relative;
+    height: 36px;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.04);
+}
+.lane-block {
+    position: absolute;
+    top: 4px;
+    height: 28px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+    font-size: 12px;
+    font-weight: 600;
+    overflow: hidden;
+    white-space: nowrap;
+    color: #fff;
+}
+.lane-block.striped {
+    background: repeating-linear-gradient(-45deg, rgba(124, 58, 237, 0.9) 0 6px, rgba(88, 40, 170, 0.9) 6px 12px) !important;
+}
+.lane-blip {
+    position: absolute;
+    top: 15px;
+    width: 5px;
+    height: 5px;
+    margin-left: -2px;
+    border-radius: 50%;
+    background: #e8710a;
+}
+.clock {
+    position: relative;
+    height: 28px;
+    margin: 8px 0 0;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.04);
+}
+.clock .lane-block { top: 3px; height: 22px; }
+.clock .lane-blip { top: 11px; }
+.interval-muted { color: rgba(255,255,255,0.45); }
 .spend-row { border-bottom: 1px solid rgba(255,255,255,0.06); }
 .spend-row:last-child { border-bottom: none; }
 .spend-row summary {
