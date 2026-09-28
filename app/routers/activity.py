@@ -3,6 +3,8 @@ import logging
 from datetime import date, datetime
 from pathlib import Path
 
+from urllib.parse import urlencode
+
 from fastapi import APIRouter, HTTPException, Request, Form
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -11,18 +13,18 @@ from app.auth import get_current_user, has_service_access
 from app.database import User
 from app.services.activity import (
     authenticate_device,
-    build_day,
     create_device,
     delete_device,
     delete_place,
     device_config,
     latest_fix,
+    layered_page,
     list_devices,
     list_places,
-    load_breakdown,
     record_location,
     record_screen,
     regenerate_device_token,
+    remember_stay,
     rename_device,
     settings_view,
     update_settings,
@@ -218,19 +220,41 @@ async def activity_location(token: str, request: Request):
 
 @router.get("")
 @router.get("/")
-async def activity_index(request: Request, date: str | None = None):
+async def activity_index(request: Request, date: str | None = None, stay: str | None = None):
     user = await gate(request)
     if not isinstance(user, User):
         return user
     prefs = await settings_view(user.id)
     day = parse_day(date, prefs["timezone"])
-    view = await build_day(user.id, day)
-    view["breakdown"] = load_breakdown(user.id, day)
+    view = await layered_page(user.id, day, stay)
     return templates.TemplateResponse(
         request=request,
         name="activity/index.html",
         context=page_context(request, user, "day", **view),
     )
+
+
+@router.post("/remember")
+async def activity_remember(
+    request: Request,
+    date: str = Form(""),
+    stay_start: str = Form(""),
+    name: str = Form(""),
+):
+    user = await gate(request)
+    if not isinstance(user, User):
+        return user
+    prefs = await settings_view(user.id)
+    day = parse_day(date or None, prefs["timezone"])
+    error = await remember_stay(user.id, day, stay_start, name)
+    params = {"date": day.isoformat()}
+    if stay_start:
+        params["stay"] = stay_start
+    if error:
+        params["error"] = error
+    else:
+        params["success"] = "Место запомнено"
+    return RedirectResponse("/activity?" + urlencode(params), status_code=303)
 
 
 @router.get("/places")
