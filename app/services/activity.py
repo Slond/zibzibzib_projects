@@ -970,6 +970,198 @@ async def build_day(user_id: int, day: date) -> dict:
         }
 
 
+async def _merged_document(user_id: int, day: date) -> tuple[dict, dict]:
+    """Load raw samples and return the layered day plus page navigation."""
+    from app.services.activity_day import GeoPoint, PlaceSignature, ScreenSample, read_day
+
+    async with async_session() as session:
+        settings = await get_or_create_settings(session, user_id)
+        await session.commit()
+        tz = zone_or_default(settings.timezone)
+        start, end = local_day_bounds(day, tz)
+        result = await session.execute(
+            select(ActivityEvent, ActivityDevice)
+            .join(ActivityDevice, ActivityDevice.id == ActivityEvent.device_id)
+            .where(
+                ActivityEvent.user_id == user_id,
+                ActivityDevice.user_id == user_id,
+                ActivityEvent.recorded_at >= start,
+                ActivityEvent.recorded_at < end,
+            )
+            .order_by(ActivityEvent.recorded_at.asc())
+        )
+        rows = result.all()
+        places = await _places_for(session, user_id)
+        place_count = await session.scalar(
+            select(func.count()).select_from(ActivityPlace).where(ActivityPlace.user_id == user_id)
+        )
+        device_count = await session.scalar(
+            select(func.count()).select_from(ActivityDevice).where(ActivityDevice.user_id == user_id)
+        )
+        sample = max(1, settings.sample_minutes or 1)
+
+    points = []
+    screens = []
+    raw_latest = None
+    for event, device in rows:
+        recorded = naive_utc(event.recorded_at)
+        if raw_latest is None or recorded > raw_latest:
+            raw_latest = recorded
+        if event.kind == "location" and event.latitude is not None and event.longitude is not None:
+            points.append(GeoPoint(recorded, event.latitude, event.longitude))
+        elif event.kind == "screen":
+            screens.append(
+                ScreenSample(
+                    recorded,
+                    device.name,
+                    event.app_name or "",
+                    event.window_title or "",
+                    event.wifi_ssid,
+                )
+            )
+    signatures = [
+        PlaceSignature(
+            name=place.name,
+            lat=place.latitude,
+            lon=place.longitude,
+            ssid=place.wifi_ssid,
+            created_at=naive_utc(place.created_at) if place.created_at else datetime(1970, 1, 1),
+            corrected_at=naive_utc(place.corrected_at) if place.corrected_at else None,
+        )
+        for place in places
+    ]
+    today = datetime.now(tz).date()
+    document = read_day(
+        breakdown_dir(),
+        user_id,
+        day,
+        today,
+        tz,
+        points,
+        screens,
+        signatures,
+        raw_latest,
+        sample_minutes=sample,
+    )
+    extras = {
+        "day": day.isoformat(),
+        "day_label": fmt_day(day),
+        "is_today": day == today,
+        "prev_date": (day - timedelta(days=1)).isoformat(),
+        "next_date": None if day >= today else (day + timedelta(days=1)).isoformat(),
+        "has_places": bool(place_count),
+        "has_devices": bool(device_count),
+    }
+    return document, extras
+
+
+async def layered_page(user_id: int, day: date, selected_start: str | None = None) -> dict:
+    from app.services.activity_day import present_day
+
+    try:
+        document, extras = await _merged_document(user_id, day)
+    except Exception:
+        logger.exception("activity layered page")
+        document = {"error": "raw", "body": [], "screen": [], "agent": [], "disputes": []}
+        tz_now = datetime.now(zone_or_default(None))
+        today = tz_now.date()
+        extras = {
+            "day": day.isoformat(),
+            "day_label": fmt_day(day),
+            "is_today": day == today,
+            "prev_date": (day - timedelta(days=1)).isoformat(),
+            "next_date": None if day >= today else (day + timedelta(days=1)).isoformat(),
+            "has_places": False,
+            "has_devices": True,
+        }
+    view = present_day(document, selected_start)
+    view.update(extras)
+    if not extras["has_devices"]:
+        view.pop("screen_sum", None)
+        view.pop("agent_sum", None)
+    return view
+
+
+def _matching_place(places, lat: float, lon: float, ssid: str | None):
+    from app.services.activity_day import STAY_RADIUS_M
+
+    found = None
+    best = None
+    stay_ssid = (ssid or "").strip()
+    for place in places:
+        if place.latitude is None or place.longitude is None:
+            continue
+        distance = haversine_m(lat, lon, place.latitude, place.longitude)
+        if distance > STAY_RADIUS_M:
+            continue
+        place_ssid = (place.wifi_ssid or "").strip()
+        if stay_ssid and place_ssid and stay_ssid != place_ssid:
+            continue
+        if best is None or distance < best:
+            found = place
+            best = distance
+    return found
+
+
+async def remember_stay(user_id: int, day: date, stay_start: str, name: str) -> str | None:
+    """Store one signature for the selected stay. A second save updates that row."""
+    from app.services.activity_day import STAY_RADIUS_M
+
+    name = (name or "").strip()[:80]
+    if not name:
+        return "Укажите название места"
+    if not stay_start:
+        return "Выберите место на шкале"
+    try:
+        stamp = naive_utc(datetime.fromisoformat(stay_start))
+    except ValueError:
+        return "Выберите место на шкале"
+    try:
+        document, _extras = await _merged_document(user_id, day)
+    except Exception:
+        logger.exception("activity remember")
+        return "День не собрался. Сырые события не прочитались."
+    stay = next(
+        (
+            row
+            for row in document.get("body") or []
+            if row.get("kind") == "stay" and row.get("start") == stay_start
+        ),
+        None,
+    )
+    center = (stay or {}).get("center") or {}
+    if stay is None or center.get("lat") is None or center.get("lon") is None:
+        return "Выберите место на шкале"
+    ssid = (stay.get("ssid") or "").strip()[:128]
+    async with async_session() as session:
+        places = await _places_for(session, user_id)
+        match = _matching_place(places, center["lat"], center["lon"], ssid or None)
+        if match:
+            match.name = name
+            match.corrected_at = stamp
+            if ssid and not (match.wifi_ssid or "").strip():
+                match.wifi_ssid = ssid
+        else:
+            session.add(
+                ActivityPlace(
+                    user_id=user_id,
+                    name=name,
+                    wifi_ssid=ssid or None,
+                    latitude=center["lat"],
+                    longitude=center["lon"],
+                    radius_m=STAY_RADIUS_M,
+                    created_at=stamp,
+                    corrected_at=stamp,
+                )
+            )
+        await session.commit()
+    try:
+        await _merged_document(user_id, day)
+    except Exception:
+        logger.exception("activity remember reapply")
+    return None
+
+
 async def list_places(user_id: int) -> list[dict]:
     async with async_session() as session:
         places = await _places_for(session, user_id)

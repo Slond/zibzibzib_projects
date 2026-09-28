@@ -4,6 +4,12 @@
         <h1>📍 Активность</h1>
     </div>
     <div class="header-links">
+        {% if screen_sum is defined and screen_sum %}
+        <div class="day-sums">
+            <div><strong>{{ screen_sum }}</strong><span>ты за экраном</span></div>
+            <div><strong>{{ agent_sum }}</strong><span>агент ещё</span></div>
+        </div>
+        {% endif %}
         <span style="font-size:13px;color:rgba(255,255,255,0.55);">{{ user.name or user.email }}</span>
     </div>
 </div>
