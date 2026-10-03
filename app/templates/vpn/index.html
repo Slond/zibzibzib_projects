@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}VPN{% endblock %}
+
+{% block extra_styles %}
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+}
+.stat-card {
+    background: rgba(255,255,255,0.05);
+    border-radius: 16px;
+    padding: 16px;
+}
+.stat-label {
+    font-size: 11px;
+    color: rgba(255,255,255,0.5);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 6px;
+}
+.stat-value { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stat-sub { margin-top: 6px; font-size: 12px; color: rgba(255,255,255,0.45); }
+.banner {
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 16px;
+    font-size: 14px;
+}
+.banner.ok { background: rgba(46, 160, 90, 0.16); color: #b7f0cb; }
+.banner.warn { background: rgba(234, 179, 8, 0.14); color: #fde68a; }
+.chart { display: flex; align-items: flex-end; gap: 4px; height: 110px; margin-top: 8px; }
+.col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; }
+.bar { width: 100%; background: #4361ee; border-radius: 3px 3px 0 0; }
+.col span { margin-top: 6px; height: 12px; font-size: 10px; color: rgba(255,255,255,0.4); }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid rgba(255,255,255,0.08); font-size: 14px; vertical-align: middle; }
+th { font-size: 11px; color: rgba(255,255,255,0.45); text-transform: uppercase; letter-spacing: 0.04em; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.25); margin-right: 6px; }
+.dot.on { background: #4ade80; }
+.add-row { display: flex; gap: 8px; margin-bottom: 14px; }
+.add-row input { flex: 1; }
+.table-wrap { overflow-x: auto; }
+.note { margin-top: 12px; color: rgba(255,255,255,0.45); font-size: 13px; line-height: 1.45; }
+h2.section { font-size: 13px; color: rgba(255,255,255,0.5); text-transform: uppercase; letter-spacing: 0.04em; margin: 8px 0 12px; }
+{% endblock %}
+
+{% block body %}
+<div class="header">
+    <div class="header-left">
+        <a href="/" class="back-link">←</a>
+        <h1>🔐 VPN</h1>
+    </div>
+    <div class="header-links">
+        <span style="font-size:13px;color:rgba(255,255,255,0.55);">{{ user.name or user.email }}</span>
+    </div>
+</div>
+<div class="content" style="padding-bottom: 48px;">
+    {% if snap.error %}<div class="error">{{ snap.error }}</div>{% endif %}
+    {% if not snap.deployed %}
+    <div class="banner warn">AmneziaWG на этом сервере ещё не запущен.</div>
+    {% elif not snap.alive %}
+    <div class="banner warn">Демон не отвечает. На сервере: systemctl status amneziawg</div>
+    {% else %}
+    <div class="banner ok">Туннель слушает {{ snap.endpoint }} UDP</div>
+    {% endif %}
+
+    <div class="stats-grid">
+        <div class="stat-card"><div class="stat-label">Онлайн</div><div class="stat-value">{{ snap.online_label }}</div></div>
+        <div class="stat-card"><div class="stat-label">Сегодня</div><div class="stat-value">{{ snap.today_gib }}</div><div class="stat-sub">{{ snap.today_exact }}</div></div>
+        <div class="stat-card"><div class="stat-label">Всего</div><div class="stat-value">{{ snap.total_gib }}</div><div class="stat-sub">{{ snap.split }}</div></div>
+        <div class="stat-card"><div class="stat-label">Сейчас</div><div class="stat-value">{{ snap.rate }}</div><div class="stat-sub">за последнюю минуту</div></div>
+    </div>
+
+    <div class="card">
+        <h2 class="section">За 24 часа</h2>
+        {% if snap.chart_empty %}
+        <p class="note">Пока пусто. Столбики появятся, когда клиенты начнут ходить в сеть.</p>
+        {% else %}
+        <div class="chart" role="img" aria-label="Трафик за 24 часа">
+            {% for bar in snap.chart %}
+            <div class="col" title="{{ bar.title }}">
+                <div class="bar" style="height: {{ bar.height }}px"></div>
+                {% if loop.index0 % 4 == 0 %}<span>{{ bar.label }}</span>{% else %}<span></span>{% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        <p class="note">Всего копится с первого опроса и не сбрасывается при перезапуске демона. Сегодня — с полуночи по времени сервера. ↓ скачано клиентом, ↑ отправлено клиентом.</p>
+    </div>
+
+    <div class="card">
+        <h2 class="section">Клиенты</h2>
+        {% if snap.deployed %}
+        <form method="post" action="/vpn/clients" class="add-row">
+            <input name="name" required maxlength="41" placeholder="телефон" autocomplete="off">
+            <button class="btn" type="submit">Выпустить ключ</button>
+        </form>
+        {% endif %}
+        {% if snap.clients %}
+        <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Имя</th><th>Адрес</th><th>Статус</th><th>Handshake</th><th>Откуда</th>
+                    <th>Сегодня</th><th>Всего</th><th>Сейчас</th><th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for client in snap.clients %}
+                <tr>
+                    <td><a href="/vpn/clients/{{ client.id }}">{{ client.name }}</a></td>
+                    <td>{{ client.address }}</td>
+                    <td><span class="dot {% if client.online %}on{% endif %}"></span>{% if client.online %}в сети{% else %}тихо{% endif %}</td>
+                    <td>{{ client.handshake }}</td>
+                    <td>{{ client.endpoint }}</td>
+                    <td>{{ client.today }}</td>
+                    <td>{{ client.total }}</td>
+                    <td>{{ client.rate }}</td>
+                    <td>
+                        <form method="post" action="/vpn/clients/{{ client.id }}/revoke" onsubmit="return confirm('Отозвать ключ {{ client.name }}?');">
+                            <button class="btn danger small" type="submit">Отозвать</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        {% else %}
+        <p class="note">Активных ключей нет.</p>
+        {% endif %}
+        {% if snap.revoked %}
+        <h2 class="section" style="margin-top: 22px;">Отозванные</h2>
+        <table>
+            <thead><tr><th>Имя</th><th>Адрес</th><th>Всего</th></tr></thead>
+            <tbody>
+                {% for client in snap.revoked %}
+                <tr>
+                    <td><a href="/vpn/clients/{{ client.id }}">{{ client.name }}</a></td>
+                    <td>{{ client.address }}</td>
+                    <td>{{ client.total }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

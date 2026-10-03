@@ -1,7 +1,9 @@
 """Build one layered activity day from raw points and window samples.
 
-The merger is deterministic. It does not call Codex and it ignores
-``activity_events.place_id``. Naive datetimes are UTC.
+Place geometry is deterministic and ignores ``activity_events.place_id``.
+Screen and agent blocks are taken from Codex when that file exists.
+This module does not launch Codex; it leaves a refresh mark for the host watcher.
+Naive datetimes are UTC.
 """
 
 import json
@@ -21,6 +23,8 @@ STAY_RADIUS_M = 80
 GAP_MINUTES = 45
 SHORT_STAY_MINUTES = 8
 DAY_MINUTES = 24 * 60
+DAY_VERSION = 2
+CODEX_REFRESH = timedelta(minutes=10)
 
 
 def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -264,14 +268,9 @@ def _close_block(device: str, samples: list[ScreenSample]) -> _Block:
     )
 
 
-def _covers(block: _Block, minute_start: datetime, fresh: timedelta) -> bool:
-    window_end = minute_start + timedelta(minutes=1)
-    for sample in block.samples:
-        if minute_start <= sample < window_end:
-            return True
-        if sample < minute_start and minute_start - sample < fresh:
-            return True
-    return False
+def _covers(block: _Block, minute_start: datetime, _fresh: timedelta) -> bool:
+    minute_end = minute_start + timedelta(minutes=1)
+    return block.start < minute_end and block.end >= minute_start
 
 
 def _excluded(block: _Block, lat: float | None, lon: float | None, signatures: list[PlaceSignature]) -> bool:
@@ -334,10 +333,6 @@ def _match_signature(lat: float, lon: float, ssid: str | None, signatures: list[
             continue
         if haversine_m(lat, lon, signature.lat, signature.lon) > STAY_RADIUS_M:
             continue
-        stay_ssid = _blank(ssid)
-        place_ssid = _blank(signature.ssid)
-        if stay_ssid and place_ssid and stay_ssid != place_ssid:
-            continue
         found.append(signature)
     if not found:
         return None
@@ -346,8 +341,6 @@ def _match_signature(lat: float, lon: float, ssid: str | None, signatures: list[
 
 
 def _draft_name(lat: float, lon: float, ssid: str | None, signatures: list[PlaceSignature]) -> str:
-    if _blank(ssid):
-        return _blank(ssid)
     home = _nearest_home(lat, lon, signatures)
     if home is None:
         return "без имени"
@@ -397,20 +390,60 @@ def _lookup_stay(stays: list[_Stay], minute: int) -> _Stay | None:
     return None
 
 
-def _collapse(rows: list[dict]) -> list[dict]:
+def _collapse_app(rows: list[dict]) -> list[dict]:
+    """Join a contiguous run of one app on one device, even when the window title changes."""
     if not rows:
         return []
     merged = [dict(rows[0])]
     for row in rows[1:]:
         current = merged[-1]
-        same = row["start"] == current["end"] and all(
-            row[key] == current[key] for key in row if key not in ("start", "end")
+        same = (
+            row["start"] == current["end"]
+            and row.get("device") == current.get("device")
+            and row.get("app") == current.get("app")
         )
         if same:
+            current["end"] = row["end"]
+            if row.get("title") != current.get("title"):
+                current["title"] = current.get("app") or current.get("title") or ""
+            continue
+        merged.append(dict(row))
+    return merged
+
+
+def _collapse_disputes(rows: list[dict]) -> list[dict]:
+    if not rows:
+        return []
+
+    def signature(row: dict) -> tuple:
+        names = tuple(sorted({item.get("device") or "" for item in row.get("screens") or []}))
+        return names, row.get("winner")
+
+    merged = [dict(rows[0])]
+    for row in rows[1:]:
+        current = merged[-1]
+        if row["start"] == current["end"] and signature(row) == signature(current):
             current["end"] = row["end"]
             continue
         merged.append(dict(row))
     return merged
+
+
+def _latest_sample(block: _Block, minute_start: datetime) -> datetime:
+    limit = minute_start + timedelta(minutes=1)
+    covered = [sample for sample in block.samples if sample < limit]
+    return covered[-1] if covered else block.start
+
+
+def _front_block(blocks: list[_Block], minute_start: datetime) -> _Block:
+    return max(blocks, key=lambda block: (_latest_sample(block, minute_start), block.start))
+
+
+def _one_per_device(blocks: list[_Block], minute_start: datetime) -> list[_Block]:
+    grouped: dict[str, list[_Block]] = {}
+    for block in blocks:
+        grouped.setdefault(block.device, []).append(block)
+    return [_front_block(items, minute_start) for items in grouped.values()]
 
 
 def merge_day(
@@ -461,14 +494,26 @@ def merge_day(
         lon = stay.lon if stay else None
         kept = [block for block in active if not _excluded(block, lat, lon, signatures)]
         rejected = [block for block in active if block not in kept]
+        minute_start = _as_utc(day_start + timedelta(minutes=minute))
+        fronts = _one_per_device(kept, minute_start)
         person = None
         dispute = False
-        if len(kept) == 1:
-            person = kept[0]
-        elif len(kept) > 1:
+        if len(fronts) == 1:
+            person = fronts[0]
+        elif len(fronts) > 1:
             dispute = True
-            person = _winner(kept, _as_utc(day_start + timedelta(minutes=minute)))
-        agents = [block for block in active if block is not person]
+            person = _winner(fronts, minute_start)
+        agents = [block for block in fronts if block is not person]
+        if person is not None:
+            computer_use = [
+                block
+                for block in kept
+                if block.device == person.device and block is not person and _computer_use(block.title)
+            ]
+            agents.extend(_one_per_device(computer_use, minute_start))
+        for block in _one_per_device(rejected, minute_start):
+            if person is None or block.device != person.device:
+                agents.append(block)
         start = _iso(day, tz, minute)
         end = _iso(day, tz, minute + 1)
         if person is not None:
@@ -507,20 +552,22 @@ def merge_day(
                 }
             )
     return {
+        "version": DAY_VERSION,
         "body": body,
-        "screen": _collapse(screen_rows),
+        "screen": _collapse_named(screen_rows),
         "agent": _collapse_named(agent_rows),
-        "disputes": _collapse(dispute_rows),
+        "disputes": _collapse_disputes(dispute_rows),
     }
 
 
 def _collapse_named(rows: list[dict]) -> list[dict]:
     grouped: dict[str, list[dict]] = {}
     for row in rows:
-        grouped.setdefault(row["device"], []).append(row)
+        grouped.setdefault(row.get("device") or "", []).append(row)
     merged = []
     for device in sorted(grouped):
-        merged.extend(_collapse(grouped[device]))
+        merged.extend(_collapse_app(grouped[device]))
+    merged.sort(key=lambda row: row["start"])
     return merged
 
 
@@ -595,6 +642,7 @@ def _block_box(row: dict) -> dict | None:
         "height": minutes / DAY_MINUTES * 100,
         "kind": row.get("kind") or "",
         "name": title,
+        "color": _hex_color(row.get("color")),
         "start": row.get("start") or "",
         "device": row.get("device") or "",
         "seconds": max(duration, 0),
@@ -605,11 +653,16 @@ def _block_box(row: dict) -> dict | None:
 def _dispute_line(row: dict) -> str:
     try:
         start = datetime.fromisoformat(row["start"])
+        end = datetime.fromisoformat(row["end"])
     except (KeyError, TypeError, ValueError):
         return ""
-    clock = f"{start.hour:02d}:{start.minute:02d}"
-    names = [item.get("device") or "" for item in row.get("screens") or []]
-    names = [name for name in names if name]
+    end_label = "24:00" if end.date() != start.date() else f"{end.hour:02d}:{end.minute:02d}"
+    clock = f"{start.hour:02d}:{start.minute:02d}–{end_label}"
+    names = []
+    for item in row.get("screens") or []:
+        name = item.get("device") or ""
+        if name and name not in names:
+            names.append(name)
     if len(names) <= 1:
         who = names[0] if names else "устройства"
     elif len(names) == 2:
@@ -646,11 +699,17 @@ def present_day(document: dict, selected_start: str | None = None) -> dict:
         agent_seconds += box["seconds"]
         agents.append(box)
     selected = next((item for item in body if item.get("selected")), None)
-    hours = [
-        {"label": f"{hour:02d}", "top": hour / 24 * 100, "last": False}
-        for hour in (0, 6, 12, 18)
-    ]
-    hours.append({"label": "24", "top": 100, "last": True})
+    hours = []
+    for minute in range(0, DAY_MINUTES + 1, 15):
+        hour, rest = divmod(minute, 60)
+        hours.append(
+            {
+                "label": f"{hour:02d}:{rest:02d}",
+                "top": minute / DAY_MINUTES * 100,
+                "last": minute == DAY_MINUTES,
+                "major": rest == 0,
+            }
+        )
     disputes = [line for line in (_dispute_line(row) for row in document.get("disputes") or []) if line]
     return {
         "body_blocks": body,
@@ -672,11 +731,157 @@ def present_day(document: dict, selected_start: str | None = None) -> dict:
 
 
 def is_old_codex(document: dict) -> bool:
+    if not isinstance(document, dict):
+        return False
+    if document.get("source") == "codex" and "body" in document:
+        return False
     return "categories" in document or "blocks" in document
 
 
+def _hhmm_minutes(value: str) -> int | None:
+    if not isinstance(value, str) or len(value) != 5 or value[2] != ":":
+        return None
+    hour, minute = value.split(":")
+    if not (hour.isdigit() and minute.isdigit()):
+        return None
+    total_hour, total_minute = int(hour), int(minute)
+    if total_hour > 23 or total_minute > 59:
+        return None
+    return total_hour * 60 + total_minute
+
+
+def _codex_payload(document: dict | None) -> dict | None:
+    if not isinstance(document, dict):
+        return None
+    blocks = document.get("blocks")
+    categories = document.get("categories")
+    if isinstance(blocks, list) and isinstance(categories, list):
+        return document
+    return None
+
+
+def _codex_agent_spans(document: dict) -> list:
+    spans = document.get("codex_agent")
+    if isinstance(spans, list):
+        return spans
+    spans = document.get("agent") or []
+    if spans and isinstance(spans[0], dict) and "note" in spans[0]:
+        return spans
+    return []
+
+
+def _hex_color(value) -> str:
+    if not isinstance(value, str) or len(value) != 7 or not value.startswith("#"):
+        return ""
+    if any(char not in "0123456789abcdefABCDEF" for char in value[1:]):
+        return ""
+    return value
+
+
+def _codex_label(block: dict) -> str:
+    names = []
+    for item in block.get("items") or []:
+        name = (item.get("name") or "").strip()
+        if name and name not in names:
+            names.append(name)
+    if names:
+        return " · ".join(names)[:80]
+    return (block.get("category") or "").strip()
+
+
+def codex_layers(document: dict, day: date, tz: ZoneInfo) -> tuple[list, list]:
+    """Turn Codex occupations into the screen and agent columns."""
+    colors = {}
+    for category in document.get("categories") or []:
+        if isinstance(category, dict):
+            colors[category.get("id")] = _hex_color(category.get("color"))
+    screen = []
+    for block in document.get("blocks") or []:
+        start = _hhmm_minutes(block.get("start"))
+        end = _hhmm_minutes(block.get("end"))
+        if start is None or end is None or end <= start:
+            continue
+        label = _codex_label(block)
+        screen.append(
+            {
+                "start": _iso(day, tz, start),
+                "end": _iso(day, tz, end),
+                "app": label,
+                "title": label,
+                "device": block.get("device") or "",
+                "color": colors.get(block.get("category")) or "",
+            }
+        )
+    agent = []
+    for span in _codex_agent_spans(document):
+        start = _hhmm_minutes(span.get("start"))
+        end = _hhmm_minutes(span.get("end"))
+        note = (span.get("note") or "").strip()
+        if start is None or end is None or end <= start or not note:
+            continue
+        agent.append(
+            {
+                "start": _iso(day, tz, start),
+                "end": _iso(day, tz, end),
+                "app": "Агент",
+                "title": note,
+                "device": span.get("device") or "",
+            }
+        )
+    return screen, agent
+
+
+def _with_codex(body: list, codex_doc: dict, day: date, tz: ZoneInfo, aggregated_at: str | None) -> dict:
+    screen, agent = codex_layers(codex_doc, day, tz)
+    return {
+        "version": DAY_VERSION,
+        "source": "codex",
+        "aggregated_at": aggregated_at,
+        "body": body,
+        "screen": screen,
+        "agent": agent,
+        "disputes": [],
+        "categories": codex_doc.get("categories") or [],
+        "blocks": codex_doc.get("blocks") or [],
+        "codex_agent": _codex_agent_spans(codex_doc),
+    }
+
+
+def _request_codex(root: Path, user_id: int, day: date) -> None:
+    path = day_path(root, user_id, day)
+    if path.with_suffix(".refresh").exists() or path.with_suffix(".running").exists():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.with_suffix(".refresh").write_text(day.isoformat(), encoding="utf-8")
+
+
+def _aggregated_at(document: dict | None, path: Path) -> datetime | None:
+    raw = (document or {}).get("aggregated_at")
+    if isinstance(raw, str) and raw:
+        try:
+            return _as_utc(datetime.fromisoformat(raw))
+        except ValueError:
+            return None
+    if path.exists():
+        return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+    return None
+
+
+def _codex_is_stale(aggregated: datetime | None, day: date, today: date, raw_latest: datetime | None) -> bool:
+    if day != today or aggregated is None or raw_latest is None:
+        return False
+    if _as_utc(raw_latest) <= aggregated:
+        return False
+    return datetime.now(timezone.utc) - aggregated >= CODEX_REFRESH
+
+
 def is_layered(document: dict) -> bool:
-    return isinstance(document, dict) and "body" in document and not is_old_codex(document)
+    return (
+        isinstance(document, dict)
+        and document.get("version") == DAY_VERSION
+        and "body" in document
+        and not is_old_codex(document)
+    )
 
 
 def day_path(root: Path, user_id: int, day: date) -> Path:
@@ -717,35 +922,49 @@ def read_day(
     raw_failed: bool = False,
 ) -> dict:
     path = day_path(root, user_id, day)
-    branch = "rebuild"
     existing = _read_json(path) if path.exists() else None
-    if path.exists() and existing is None:
-        branch = "rebuild"
-    elif existing is not None and is_old_codex(existing):
-        branch = "rebuild"
-    elif existing is not None and is_layered(existing) and day < today:
-        branch = "hit"
-    elif existing is not None and is_layered(existing) and day == today:
-        file_time = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
-        newer = raw_latest is not None and _as_utc(raw_latest) > file_time
-        branch = "rebuild" if newer else "hit"
-    elif not points and not screens:
-        branch = "empty"
     if raw_failed:
         logger.info("activity read_day user=%s date=%s branch=error", user_id, day.isoformat())
         return {"error": "raw", "body": [], "screen": [], "agent": [], "disputes": []}
-    if branch == "empty":
-        logger.info("activity read_day user=%s date=%s branch=empty", user_id, day.isoformat())
-        return {"body": [], "screen": [], "agent": [], "disputes": []}
-    if branch == "hit" and existing is not None:
+    codex_doc = _codex_payload(existing)
+    have_raw = bool(points or screens)
+    closed = existing is not None and is_layered(existing) and day < today
+    if closed and codex_doc is None:
         if reapply_signatures(existing, day, tz, signatures):
             _write_json(path, existing)
+        if have_raw and existing.get("source") != "codex":
+            _request_codex(root, user_id, day)
         logger.info("activity read_day user=%s date=%s branch=hit", user_id, day.isoformat())
         return existing
-    if not points and not screens:
+    if not have_raw and codex_doc is None:
         logger.info("activity read_day user=%s date=%s branch=empty", user_id, day.isoformat())
         return {"body": [], "screen": [], "agent": [], "disputes": []}
-    document = merge_day(day, tz, points, screens, signatures, sample_minutes)
+    geometry = None if closed or not have_raw else merge_day(day, tz, points, screens, signatures, sample_minutes)
+    if codex_doc is not None:
+        body = geometry["body"] if geometry is not None else list((existing or {}).get("body") or [])
+        document = _with_codex(body, codex_doc, day, tz, (codex_doc or {}).get("aggregated_at"))
+        if document["aggregated_at"] is None:
+            stamped = _aggregated_at(codex_doc, path)
+            document["aggregated_at"] = stamped.isoformat() if stamped else None
+        reapply_signatures(document, day, tz, signatures)
+        if _codex_is_stale(_aggregated_at(document, path), day, today, raw_latest):
+            _request_codex(root, user_id, day)
+            document["codex_stale"] = True
+        _write_json(path, document)
+        logger.info("activity read_day user=%s date=%s branch=codex", user_id, day.isoformat())
+        return document
+    document = dict(geometry or {"body": [], "screen": [], "agent": [], "disputes": []})
+    document["version"] = DAY_VERSION
+    document["source"] = "geometry"
+    if have_raw:
+        _request_codex(root, user_id, day)
+        document["codex_stale"] = True
+    fresh = _read_json(path) if path.exists() else None
+    if _codex_payload(fresh):
+        logger.info("activity read_day user=%s date=%s branch=codex", user_id, day.isoformat())
+        return read_day(
+            root, user_id, day, today, tz, points, screens, signatures, raw_latest, sample_minutes, raw_failed
+        )
     _write_json(path, document)
     logger.info("activity read_day user=%s date=%s branch=rebuild", user_id, day.isoformat())
     return document

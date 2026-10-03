@@ -22,7 +22,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-          "required": ["category", "start", "end", "items"],
+          "required": ["category", "device", "start", "end", "items", "blips"],
           "properties": {
             "category": { "type": "string", "minLength": 1 },
             "device": { "type": "string" },
@@ -63,7 +63,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["start", "end", "note"],
+        "required": ["device", "start", "end", "note"],
         "properties": {
           "device": { "type": "string" },
           "start": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$" },

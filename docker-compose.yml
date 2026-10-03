@@ -12,8 +12,13 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - YANDEX_TOKEN=${YANDEX_TOKEN}
       - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS}
+      - AWG_DIR=/etc/amneziawg
+      - AWG_SOCKET=/var/run/amneziawg/awg0.sock
+      - AWG_DB=/app/data/awg.db
     volumes:
       - ./data:/app/data
+      - /etc/amneziawg:/etc/amneziawg
+      - /var/run/amneziawg:/var/run/amneziawg
     networks:
       - web_net
 

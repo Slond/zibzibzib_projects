@@ -42,12 +42,13 @@
     <p class="day-failed">День не собрался. Сырые события не прочитались.</p>
     {% endif %}
 
+    <div class="vscroll">
     <div class="vday">
         <div class="vgutter">
             <div class="vlabel"></div>
             <div class="vtrack">
                 {% for hour in hours %}
-                <span class="{{ 'vfirst' if loop.first else '' }} {{ 'vlast' if hour.last else '' }}" style="top: {{ hour.top }}%">{{ hour.label }}</span>
+                <span class="{{ 'vfirst' if loop.first else '' }} {{ 'vlast' if hour.last else '' }} {{ 'vmajor' if hour.major else 'vminor' }}" style="top: {{ hour.top }}%">{{ hour.label }}</span>
                 {% endfor %}
             </div>
         </div>
@@ -57,19 +58,20 @@
             <div class="vtrack">
                 <div class="vhours">
                     {% for hour in hours %}
-                    <span class="{{ 'vfirst' if loop.first else '' }} {{ 'vlast' if hour.last else '' }}" style="top: {{ hour.top }}%">{{ hour.label }}</span>
+                    <span class="{{ 'vfirst' if loop.first else '' }} {{ 'vlast' if hour.last else '' }} {{ 'vmajor' if hour.major else 'vminor' }}" style="top: {{ hour.top }}%">{{ hour.label }}</span>
                     {% endfor %}
                 </div>
                 {% for block in column.blocks %}
                 {% if block.is_stay %}
-                <button type="button" class="vblock stay {{ 'selected' if block.selected else '' }}" style="top: {{ block.top }}%; height: {{ block.height }}%" data-start="{{ block.start }}" data-name="{{ block.name }}" title="{{ block.name }}">{{ block.name }}</button>
+                <button type="button" class="vblock stay {{ 'selected' if block.selected else '' }}" style="--top: {{ block.top }}%; --h: {{ block.height }}%;" data-start="{{ block.start }}" data-name="{{ block.name }}" title="{{ block.name }}">{{ block.name }}</button>
                 {% else %}
-                <div class="vblock {{ block.kind or column.kind }}" style="top: {{ block.top }}%; height: {{ block.height }}%" title="{{ block.name }}">{{ block.name }}</div>
+                <div class="vblock {{ block.kind or column.kind }}" style="--top: {{ block.top }}%; --h: {{ block.height }}%;{% if block.color %} --fill: {{ block.color }};{% endif %}" title="{{ block.name }}">{{ block.name }}</div>
                 {% endif %}
                 {% endfor %}
             </div>
         </section>
         {% endfor %}
+    </div>
     </div>
 
     {% if not day_error %}

@@ -52,7 +52,7 @@ MONTHS = [
 
 PROMPT = """Ты собираешь один день личного дневника.
 
-Вход — подробный лог за один местный день. Каждая строка это снимок переднего окна примерно раз в минуту, а не отдельное занятие. Поля: time (местное ЧЧ:ММ), device, app, title (может отсутствовать), place. Геолокации телефона во входе нет.
+Вход — весь день, не только окна. events — снимки переднего окна примерно раз в минуту, а не отдельные занятия. Поля: time (местное ЧЧ:ММ), device, app, title (может отсутствовать), place. points — геолокация телефона: time, lat, lon, place. places — места, которые человек уже назвал. Решай занятия по всему входу. Имя места бери из places, не выдумывай сеть и не выдумывай адрес.
 
 Верни один JSON по заданной схеме и ничего больше. Не запускай команды и не меняй файлы.
 
@@ -168,6 +168,45 @@ def screen_log(con: sqlite3.Connection, user_id: int, start: datetime, end: date
             item["place"] = place
         items.append(item)
     return items
+
+
+def location_log(con: sqlite3.Connection, user_id: int, start: datetime, end: datetime, tz: ZoneInfo) -> list[dict]:
+    rows = con.execute(
+        """
+        select e.recorded_at, e.latitude, e.longitude, p.name
+        from activity_events e
+        left join activity_places p on p.id = e.place_id and p.user_id = e.user_id
+        where e.user_id = ? and e.kind = 'location'
+          and e.latitude is not null and e.longitude is not null
+          and e.recorded_at >= ? and e.recorded_at < ?
+        order by e.recorded_at
+        """,
+        (user_id, start.strftime("%Y-%m-%d %H:%M:%S"), end.strftime("%Y-%m-%d %H:%M:%S")),
+    )
+    items = []
+    for recorded_at, lat, lon, place in rows:
+        local = parse_utc(recorded_at).astimezone(tz)
+        item = {"time": hhmm(local), "lat": round(lat, 5), "lon": round(lon, 5)}
+        if place:
+            item["place"] = place
+        items.append(item)
+    return items
+
+
+def place_log(con: sqlite3.Connection, user_id: int) -> list[dict]:
+    rows = con.execute(
+        """
+        select name, latitude, longitude
+        from activity_places
+        where user_id = ? and latitude is not null and longitude is not null
+        order by id
+        """,
+        (user_id,),
+    )
+    return [
+        {"name": name, "lat": round(lat, 5), "lon": round(lon, 5)}
+        for name, lat, lon in rows
+    ]
 
 
 def extract_json(text: str) -> dict:
@@ -296,17 +335,15 @@ def aggregate_user(con: sqlite3.Connection, row: sqlite3.Row, day: date | None) 
     start = datetime.combine(target, time.min, tzinfo=tz)
     end = start + timedelta(days=1)
     sample = max(1, int(row["sample_minutes"] or 1))
-    events = screen_log(
-        con,
-        row["user_id"],
-        start.astimezone(timezone.utc),
-        end.astimezone(timezone.utc),
-        tz,
-    )
+    utc_start = start.astimezone(timezone.utc)
+    utc_end = end.astimezone(timezone.utc)
+    events = screen_log(con, row["user_id"], utc_start, utc_end, tz)
+    points = location_log(con, row["user_id"], utc_start, utc_end, tz)
+    places = place_log(con, row["user_id"])
     work = OUT_ROOT / str(row["user_id"])
     work.mkdir(parents=True, exist_ok=True)
-    if not events:
-        print(f"user {row['user_id']} {target.isoformat()}: no screen log")
+    if not events and not points:
+        print(f"user {row['user_id']} {target.isoformat()}: no log")
         return None
     source = {
         "date": target.isoformat(),
@@ -314,6 +351,8 @@ def aggregate_user(con: sqlite3.Connection, row: sqlite3.Row, day: date | None) 
         "now": hhmm(now) if target == now.date() else None,
         "sample_minutes": sample,
         "gap_minutes": GAP_MINUTES,
+        "places": places,
+        "points": points,
         "events": events,
     }
     (work / f"{target.isoformat()}.log.json").write_text(
@@ -343,6 +382,7 @@ def aggregate_user(con: sqlite3.Connection, row: sqlite3.Row, day: date | None) 
         "model": MODEL,
         "reasoning": REASONING,
         "events": len(events),
+        "aggregated_at": datetime.now(timezone.utc).isoformat(),
     }
     dest = work / f"{target.isoformat()}.json"
     dest.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
