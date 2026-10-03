@@ -109,6 +109,26 @@ async def delete_user(user_id: int):
             await session.commit()
 
 
+async def ensure_vpn_service():
+    """Register the VPN tile on existing databases as well as fresh ones."""
+    async with async_session() as session:
+        result = await session.execute(select(Service).where(Service.slug == "vpn"))
+        if result.scalar_one_or_none():
+            return
+        max_order = await session.scalar(select(func.max(Service.order)))
+        session.add(
+            Service(
+                name="VPN",
+                slug="vpn",
+                route="/vpn",
+                icon="🔐",
+                description="Ключи AmneziaWG и расход трафика",
+                order=(max_order or 0) + 1,
+            )
+        )
+        await session.commit()
+
+
 async def ensure_activity_service():
     """Register the activity tile on existing databases as well as fresh ones."""
     async with async_session() as session:
@@ -210,6 +230,14 @@ async def ensure_admin_exists():
                     icon="🌡️",
                     description="Мониторинг датчиков",
                     order=2,
+                ),
+                Service(
+                    name="VPN",
+                    slug="vpn",
+                    route="/vpn",
+                    icon="🔐",
+                    description="Ключи AmneziaWG и расход трафика",
+                    order=3,
                 ),
             ]
             for svc in default_services:

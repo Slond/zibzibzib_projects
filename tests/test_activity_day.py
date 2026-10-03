@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from datetime import date, datetime, timedelta, timezone
@@ -8,6 +9,7 @@ from app.services.activity_day import (
     GeoPoint,
     PlaceSignature,
     ScreenSample,
+    day_path,
     is_old_codex,
     km_from_home,
     merge_day,
@@ -130,7 +132,7 @@ class MergeDayTest(unittest.TestCase):
         self.assertEqual(km_from_home(1250), "1.3 км от дома")
         self.assertEqual(km_from_home(1249), "1.2 км от дома")
 
-    def test_foreign_ssid_does_not_take_the_home_name(self):
+    def test_nearby_place_beats_the_network_name(self):
         created = datetime(2026, 1, 1, tzinfo=timezone.utc)
         points = [point(12, 0, *HOME), point(12, 30, *HOME)]
         screens = [
@@ -144,7 +146,55 @@ class MergeDayTest(unittest.TestCase):
             screens,
             [PlaceSignature("Дом", *HOME, "Veter_2", created)],
         )
-        self.assertEqual(covers(day["body"], 12, 10)[0]["name"], "OtherNet")
+        stay = covers(day["body"], 12, 10)[0]
+        self.assertEqual(stay["name"], "Дом")
+        self.assertNotIn("OtherNet", stay["name"])
+
+    def test_one_app_on_one_computer_is_one_block(self):
+        points = [point(1, 0, *HOME), point(2, 0, *HOME)]
+        origin = datetime(2026, 9, 27, tzinfo=TZ)
+        screens = [
+            ScreenSample(origin + timedelta(minutes=60 + minute), "Macbook", "ChatGPT", f"chat {minute}")
+            for minute in range(30)
+        ]
+        day = merge_day(DAY, TZ, points, screens, [])
+        self.assertEqual(len(day["screen"]), 1)
+        self.assertEqual(day["screen"][0]["app"], "ChatGPT")
+        self.assertEqual(day["screen"][0]["title"], "ChatGPT")
+        self.assertEqual(day["agent"], [])
+        self.assertEqual(day["disputes"], [])
+
+    def test_computer_use_on_the_same_computer_is_one_agent_block(self):
+        points = [point(16, 0, *HOME), point(16, 40, *HOME)]
+        origin = datetime(2026, 9, 27, tzinfo=TZ)
+        screens = []
+        for minute in range(16 * 60, 16 * 60 + 20):
+            screens.append(
+                ScreenSample(origin + timedelta(minutes=minute), "Macbook", "ChatGPT", "Computer Use Controls")
+            )
+            screens.append(
+                ScreenSample(origin + timedelta(minutes=minute, seconds=30), "Macbook", "Cursor", f"file {minute}")
+            )
+        day = merge_day(DAY, TZ, points, screens, [])
+        self.assertEqual(len(day["screen"]), 1)
+        self.assertEqual(day["screen"][0]["app"], "Cursor")
+        self.assertEqual(len(day["agent"]), 1)
+        self.assertEqual(day["agent"][0]["app"], "ChatGPT")
+        self.assertEqual(day["disputes"], [])
+
+    def test_two_computers_make_one_dispute(self):
+        points = [point(16, 0, *HOME), point(16, 40, *HOME)]
+        origin = datetime(2026, 9, 27, tzinfo=TZ)
+        screens = []
+        for minute in range(16 * 60 + 15, 16 * 60 + 25):
+            screens.append(ScreenSample(origin + timedelta(minutes=minute), "PC", "dota2", "Dota 2"))
+            screens.append(
+                ScreenSample(origin + timedelta(minutes=minute, seconds=10), "Macbook", "Cursor", f"file {minute}")
+            )
+        day = merge_day(DAY, TZ, points, screens, [])
+        self.assertEqual(len(day["disputes"]), 1)
+        self.assertEqual(len(day["screen"]), 1)
+        self.assertEqual(len(day["agent"]), 1)
 
     def test_short_stay_between_roads_becomes_road(self):
         near = (43.23300, 76.96000)
@@ -172,6 +222,68 @@ class MergeDayTest(unittest.TestCase):
     def test_old_codex_file_is_detected(self):
         self.assertTrue(is_old_codex({"categories": [], "blocks": []}))
         self.assertFalse(is_old_codex({"body": [], "agent": []}))
+        self.assertFalse(is_old_codex({"source": "codex", "body": [], "categories": [], "blocks": []}))
+
+    def test_codex_blocks_are_not_replaced(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            path = day_path(root, 1, DAY)
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                json.dumps(
+                    {
+                        "categories": [{"id": "work", "name": "Работа", "color": "#1a73e8"}],
+                        "blocks": [
+                            {
+                                "category": "work",
+                                "device": "Macbook",
+                                "start": "16:00",
+                                "end": "18:00",
+                                "items": [{"name": "Cursor", "start": "16:00", "end": "18:00"}],
+                            }
+                        ],
+                        "agent": [
+                            {
+                                "device": "Macbook",
+                                "start": "16:10",
+                                "end": "16:40",
+                                "note": "ChatGPT вёл окно",
+                            }
+                        ],
+                        "aggregated_at": "2026-09-27T12:00:00+00:00",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            points = [point(16, 0, *HOME), point(17, 0, *HOME)]
+            screens = [screen(16, 30, "Macbook", "Safari", "mail")]
+            result = read_day(
+                root,
+                1,
+                DAY,
+                date(2026, 9, 28),
+                TZ,
+                points,
+                screens,
+                [],
+                raw_latest=datetime(2026, 9, 27, 11, tzinfo=timezone.utc),
+            )
+            self.assertEqual(covers(result["screen"], 16, 30)[0]["title"], "Cursor")
+            self.assertEqual(covers(result["screen"], 16, 30)[0]["color"], "#1a73e8")
+            self.assertEqual(covers(result["agent"], 16, 20)[0]["title"], "ChatGPT вёл окно")
+            again = read_day(
+                root,
+                1,
+                DAY,
+                date(2026, 9, 28),
+                TZ,
+                [point(18, 0, *CAFE), point(18, 30, *CAFE)],
+                screens,
+                [],
+                raw_latest=datetime(2026, 9, 28, 1, tzinfo=timezone.utc),
+            )
+            self.assertEqual(covers(again["agent"], 16, 20)[0]["title"], "ChatGPT вёл окно")
+            self.assertEqual(covers(again["screen"], 16, 30)[0]["title"], "Cursor")
 
     def test_closed_day_is_not_rebuilt(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -277,6 +389,11 @@ class PresentDayTest(unittest.TestCase):
         self.assertEqual(view["screen_sum"], "30 мин")
         self.assertEqual(view["selected_name"], "зал")
         self.assertEqual(view["columns"][0]["title"], "тело")
+        self.assertEqual(view["hours"][0]["label"], "00:00")
+        self.assertEqual(view["hours"][1]["label"], "00:15")
+        self.assertTrue(view["hours"][4]["major"])
+        self.assertFalse(view["hours"][1]["major"])
+        self.assertEqual(view["hours"][-1]["label"], "24:00")
 
     def test_template_draws_vertical_day(self):
         from types import SimpleNamespace

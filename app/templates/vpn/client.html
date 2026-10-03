@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}{{ client.name }} — VPN{% endblock %}
+
+{% block extra_styles %}
+.banner { border-radius: 12px; padding: 12px 14px; margin-bottom: 16px; font-size: 14px; }
+.banner.ok { background: rgba(46, 160, 90, 0.16); color: #b7f0cb; }
+.banner.warn { background: rgba(234, 179, 8, 0.14); color: #fde68a; }
+textarea {
+    width: 100%;
+    min-height: 140px;
+    margin-top: 8px;
+    padding: 12px;
+    border-radius: 10px;
+    border: 2px solid rgba(255,255,255,0.1);
+    background: rgba(255,255,255,0.05);
+    color: #fff;
+    font-size: 13px;
+}
+.actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+.note { color: rgba(255,255,255,0.5); font-size: 14px; line-height: 1.45; }
+{% endblock %}
+
+{% block body %}
+<div class="header">
+    <div class="header-left">
+        <a href="/vpn" class="back-link">←</a>
+        <h1>🔐 {{ client.name }}</h1>
+    </div>
+</div>
+<div class="content" style="padding-bottom: 48px;">
+    <p style="margin-bottom: 12px;"><a href="/vpn">← к списку</a></p>
+    {% if fresh %}<div class="banner ok">Ключ создан. Вставьте строку в AmneziaVPN 5.0.1.5 или новее.</div>{% endif %}
+    {% if client.revoked_at %}<div class="banner warn">Ключ отозван. Туннель его больше не пустит.</div>{% endif %}
+    <div class="card">
+        {% if stats %}
+        <p>{{ stats.address }} · {% if stats.online %}в сети{% else %}тихо{% endif %} · {{ stats.handshake }}</p>
+        <p class="note" style="margin: 8px 0 16px;">Сегодня {{ stats.today }} · всего {{ stats.total }} · ↓ {{ stats.down }} · ↑ {{ stats.up }}</p>
+        {% endif %}
+        {% if link %}
+        <label class="note">vpn:// для AmneziaVPN</label>
+        <textarea id="uri" readonly>{{ link }}</textarea>
+        <div class="actions">
+            <button class="btn" type="button" id="copy">Скопировать ключ</button>
+            <a class="btn secondary" href="/vpn/clients/{{ client.id }}/conf">Скачать .conf</a>
+        </div>
+        <img alt="QR ключа" src="/vpn/clients/{{ client.id }}/qr.svg" width="280" height="280">
+        {% else %}
+        <p class="note">Для этого клиента нет сохранённого конфига.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const button = document.getElementById("copy");
+if (button) {
+    button.addEventListener("click", async () => {
+        await navigator.clipboard.writeText(document.getElementById("uri").value);
+        button.textContent = "Скопировано";
+    });
+}
+</script>
+{% endblock %}

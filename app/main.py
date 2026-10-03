@@ -21,11 +21,13 @@ from app.auth import (
     update_user_password,
     ensure_admin_exists,
     ensure_activity_service,
+    ensure_vpn_service,
     SESSION_COOKIE,
 )
 from app.services.scheduler import poll_yandex_devices, process_recurring_transactions, poll_iqair_sensors
 from app.services.activity import purge_expired_screenshots
-from app.routers import dashboard, finance, weather, activity
+from app.services.awg.runtime import poll_traffic
+from app.routers import dashboard, finance, weather, activity, vpn
 
 logging.basicConfig(
     level=logging.INFO,
@@ -46,6 +48,8 @@ async def lifespan(app: FastAPI):
     logger.info("Admin user ensured")
     await ensure_activity_service()
     logger.info("Activity service ensured")
+    await ensure_vpn_service()
+    logger.info("VPN service ensured")
 
     if YANDEX_TOKEN:
         scheduler.add_job(
@@ -86,6 +90,13 @@ async def lifespan(app: FastAPI):
         id="activity_purge",
         replace_existing=True,
     )
+    scheduler.add_job(
+        poll_traffic,
+        "interval",
+        seconds=30,
+        id="awg_traffic",
+        replace_existing=True,
+    )
     
     scheduler.start()
     logger.info("Scheduler started")
@@ -106,6 +117,7 @@ app.include_router(dashboard.router)
 app.include_router(finance.router)
 app.include_router(weather.router)
 app.include_router(activity.router)
+app.include_router(vpn.router)
 
 
 # ============ Shared Auth Routes ============

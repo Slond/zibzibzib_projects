@@ -201,48 +201,68 @@
     border-radius: 8px;
     margin-bottom: 16px;
 }
+.vscroll {
+    max-height: calc(100vh - 250px);
+    overflow: auto;
+    border-radius: 12px;
+}
 .vday {
     display: grid;
-    grid-template-columns: 36px 1fr 1fr 1fr;
+    grid-template-columns: 52px 1fr 1fr 1fr;
     gap: 10px;
     align-items: start;
 }
 .vlabel {
+    position: sticky;
+    top: 0;
+    z-index: 3;
     height: 22px;
     margin: 0 0 8px;
     font-size: 12px;
     font-weight: 600;
     color: rgba(255,255,255,0.5);
+    background: #0f0f1a;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 .vtrack {
     position: relative;
-    height: 720px;
+    height: 5760px;
     border-radius: 12px;
-    background: rgba(255,255,255,0.03);
+    background-color: rgba(255,255,255,0.03);
+    background-image:
+        repeating-linear-gradient(to bottom, transparent 0, transparent 239px, rgba(255,255,255,0.09) 239px, rgba(255,255,255,0.09) 240px),
+        repeating-linear-gradient(to bottom, transparent 0, transparent 59px, rgba(255,255,255,0.04) 59px, rgba(255,255,255,0.04) 60px);
 }
 .vhours span, .vgutter .vtrack span {
     position: absolute;
     left: 0;
     font-size: 11px;
-    color: rgba(255,255,255,0.35);
+    font-variant-numeric: tabular-nums;
+    color: rgba(255,255,255,0.32);
     transform: translateY(-50%);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.vgutter .vtrack span.vmajor, .vhours span.vmajor {
+    color: rgba(255,255,255,0.72);
+    font-weight: 600;
 }
 .vhours span.vfirst, .vgutter .vtrack span.vfirst { transform: none; }
 .vhours span.vlast, .vgutter .vtrack span.vlast { top: auto !important; bottom: 0; transform: none; }
 .vcol .vhours { display: none; }
 .vblock {
     position: absolute;
+    top: calc(var(--top) + 3px);
+    height: max(22px, calc(var(--h) - 6px));
     left: 4px;
     width: calc(100% - 8px);
     border-radius: 6px;
     overflow: hidden;
     white-space: nowrap;
     color: #fff;
-    font-size: 12px;
-    line-height: 1.3;
-    padding: 2px 6px;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 22px;
+    padding: 0 8px;
     box-sizing: border-box;
 }
 button.vblock {
@@ -256,11 +276,11 @@ button.vblock {
 .vblock.stay.selected { box-shadow: inset 0 0 0 2px #fff; }
 .vblock.unknown { background: rgba(255,255,255,0.06); }
 .vblock.screen {
-    background: #818cf8;
+    background: var(--fill, #818cf8);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 .vblock.agent {
-    background: repeating-linear-gradient(-45deg, rgba(124, 58, 237, 0.9) 0 6px, rgba(88, 40, 170, 0.9) 6px 12px);
+    background: #7c3aed;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 .vblock.stay:focus { outline: 2px solid #4361ee; outline-offset: 1px; }
@@ -273,7 +293,7 @@ button.vblock {
     border-radius: 14px;
     padding: 12px;
 }
-.vdispute { margin: 0; flex: 1 1 220px; font-size: 13px; color: rgba(255,255,255,0.75); }
+.vdispute { margin: 0; flex: 1 1 100%; font-size: 13px; color: rgba(255,255,255,0.75); }
 .vdock-form { display: flex; gap: 10px; align-items: center; }
 .vdock-form label { font-size: 13px; color: rgba(255,255,255,0.55); white-space: nowrap; }
 .vdock-form input[name="name"] {
@@ -292,7 +312,8 @@ button.vblock {
     .vday { grid-template-columns: 1fr; }
     .vgutter { display: none; }
     .vcol .vhours { display: block; }
-    .vblock { left: 28px; width: calc(100% - 32px); }
+    .vcol .vhours span.vminor { display: none; }
+    .vblock { left: 44px; width: calc(100% - 48px); }
     .vdock { position: static; }
     .vdock-form { flex-direction: column; align-items: stretch; }
     .day-sums { gap: 10px; }
