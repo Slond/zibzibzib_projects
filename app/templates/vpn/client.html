@@ -18,6 +18,8 @@ textarea {
 }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
 .note { color: rgba(255,255,255,0.5); font-size: 14px; line-height: 1.45; }
+.qr { background: #fff; border-radius: 12px; padding: 16px; width: fit-content; max-width: 100%; }
+.qr img { width: 280px; max-width: 100%; height: auto; display: block; }
 {% endblock %}
 
 {% block body %}
@@ -33,7 +35,7 @@ textarea {
     {% if client.revoked_at %}<div class="banner warn">Ключ отозван. Туннель его больше не пустит.</div>{% endif %}
     <div class="card">
         {% if stats %}
-        <p>{{ stats.address }} · {% if stats.online %}в сети{% else %}тихо{% endif %} · {{ stats.handshake }}</p>
+        <p>{{ stats.address }} <span class="note">адрес внутри туннеля, не в интернете</span> · {% if stats.online %}в сети{% else %}тихо{% endif %} · {{ stats.handshake }}</p>
         <p class="note" style="margin: 8px 0 16px;">Сегодня {{ stats.today }} · всего {{ stats.total }} · ↓ {{ stats.down }} · ↑ {{ stats.up }}</p>
         {% endif %}
         {% if link %}
@@ -43,7 +45,10 @@ textarea {
             <button class="btn" type="button" id="copy">Скопировать ключ</button>
             <a class="btn secondary" href="/vpn/clients/{{ client.id }}/conf">Скачать .conf</a>
         </div>
-        <img alt="QR ключа" src="/vpn/clients/{{ client.id }}/qr.svg" width="280" height="280">
+        <div class="qr">
+            <img alt="QR ключа" src="/vpn/clients/{{ client.id }}/qr.svg">
+        </div>
+        <p class="note" style="margin-top: 8px;">Та же строка, что выше. Она длинная специально: внутри весь профиль, не один ключ. Если камера не берёт код, вставьте строку в AmneziaVPN.</p>
         {% else %}
         <p class="note">Для этого клиента нет сохранённого конфига.</p>
         {% endif %}

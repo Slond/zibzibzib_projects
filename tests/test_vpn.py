@@ -115,6 +115,7 @@ def test_install_plan_pins_engine_and_keeps_keys() -> None:
     assert AMNEZIAWG_GO_COMMIT in plan.script
     script_cfg = configure_script(address="10.66.66.1/24", mtu=1280)
     assert "MASQUERADE" in script_cfg
+    assert 'ethtool -K "$IFACE" tx off' in script_cfg
     assert 'if [ -S "$SOCK" ]; then' in script_cfg
     assert "icmp6-adm-prohibited" in script_cfg
     encoded = base64.b64encode(plan.files["/etc/amneziawg/server.yml"].encode()).decode()

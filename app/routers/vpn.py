@@ -137,11 +137,14 @@ async def vpn_qr(request: Request, client_id: int):
     if row is None or not row.conf.strip():
         raise HTTPException(status_code=404, detail="Нет ключа")
     try:
-        svg = segno.make(client_link(row.conf, row.name), error="l").svg_inline(scale=3)
+        svg = segno.make(client_link(row.conf, row.name), error="l").svg_inline(
+            scale=3, dark="#000", light="#fff"
+        )
     except Exception:
         svg = (
-            '<svg xmlns="http://www.w3.org/2000/svg" width="440" height="32">'
-            '<text y="20" fill="#fff" font-size="14">Ключ длинный для QR — скопируйте строку</text></svg>'
+            '<svg xmlns="http://www.w3.org/2000/svg" width="440" height="48">'
+            '<rect width="100%" height="100%" fill="#fff"/>'
+            '<text y="30" fill="#111" font-size="14">Ключ длинный для QR — скопируйте строку</text></svg>'
         )
     return Response(content=svg, media_type="image/svg+xml")
 
