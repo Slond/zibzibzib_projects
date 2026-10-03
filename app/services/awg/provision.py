@@ -58,6 +58,12 @@ fi
 
 ip addr replace "$ADDR" dev "$IFACE"
 ip link set mtu "$MTU" up dev "$IFACE"
+# amneziawg-go writes packets into the tun and does not fill checksums.
+# With tx offload left on, the client drops every TCP and UDP reply:
+# the handshake stays up and the internet does not.
+if command -v ethtool >/dev/null 2>&1; then
+  ethtool -K "$IFACE" tx off sg off tso off gso off gro off || true
+fi
 
 python3 - "$SOCK" "$CONF" <<'PY'
 import socket, sys
@@ -339,7 +345,7 @@ def _install_script(port: int, files: dict[str, str]) -> str:
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq curl ca-certificates git make gcc iptables python3 iproute2
+apt-get install -y -qq curl ca-certificates git make gcc iptables python3 iproute2 ethtool
 machine=$(uname -m)
 if [ "$machine" = "x86_64" ]; then
   go_arch=amd64
