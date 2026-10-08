@@ -1,4 +1,6 @@
 from typing import Optional
+import secrets
+from sqlalchemy import delete, update
 
 from fastapi import Request, HTTPException
 from passlib.context import CryptContext
@@ -32,8 +34,8 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
 
-def create_session_token(user_id: int) -> str:
-    return serializer.dumps({"user_id": user_id})
+def create_session_token(user: User) -> str:
+    return serializer.dumps({"user_id": user.id, "session_key": user.session_key})
 
 
 def verify_session_token(token: str) -> dict | None:
@@ -94,6 +96,7 @@ async def update_user_password(user_id: int, new_password: str):
         if user:
             user.password_hash = hash_password(new_password)
             user.must_change_password = False
+            user.session_key = generate_webhook_token()
             await session.commit()
 
 
@@ -102,6 +105,9 @@ async def delete_user(user_id: int):
 
     await delete_user_activity_data(user_id)
     async with async_session() as session:
+        await session.execute(delete(FinanceEventMember).where(FinanceEventMember.user_id == user_id))
+        from app.database import Transaction
+        await session.execute(update(Transaction).where(Transaction.created_by_user_id == user_id).values(created_by_user_id=None))
         result = await session.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()
         if user:
@@ -157,13 +163,20 @@ async def get_all_users() -> list[User]:
 
 async def get_current_user(request: Request) -> Optional[User]:
     """Get current user from session cookie"""
+    if hasattr(request.state, "current_user"):
+        return request.state.current_user
     token = request.cookies.get(SESSION_COOKIE)
     if not token:
         return None
     data = verify_session_token(token)
     if not data:
         return None
+    if not isinstance(data, dict) or not isinstance(data.get("user_id"), int):
+        return None
     user = await get_user_by_id(data["user_id"])
+    key = data.get("session_key")
+    if not user or not isinstance(key, str) or not user.session_key or not secrets.compare_digest(key, user.session_key):
+        return None
     return user
 
 

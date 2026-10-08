@@ -1,5 +1,6 @@
 """Per-user activity diary: window titles, phone locations, nearby computers."""
 import json
+import os
 import logging
 import math
 import re
@@ -282,7 +283,7 @@ _CLOCK = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
 
 
 def breakdown_dir() -> Path:
-    return activity_root().parent / "activity-days"
+    return Path(os.getenv("ACTIVITY_BREAKDOWN_DIR", activity_root().parent / "activity-days"))
 
 
 def _clock_minutes(value: str) -> int | None:
@@ -1459,9 +1460,12 @@ async def purge_expired_screenshots():
 
 
 async def delete_user_activity_data(user_id: int):
-    folder = (activity_root() / str(int(user_id))).resolve()
-    if folder.parent == activity_root() and folder.exists():
-        shutil.rmtree(folder, ignore_errors=True)
+    breakdown_dir().mkdir(parents=True, exist_ok=True)
+    (breakdown_dir() / f".deleted-user-{int(user_id)}").touch()
+    for root in (activity_root(), breakdown_dir().resolve()):
+        folder = (root / str(int(user_id))).resolve()
+        if folder.parent == root and folder.exists():
+            shutil.rmtree(folder)
     async with async_session() as session:
         await session.execute(delete(ActivityEvent).where(ActivityEvent.user_id == user_id))
         await session.execute(delete(ActivityPlace).where(ActivityPlace.user_id == user_id))

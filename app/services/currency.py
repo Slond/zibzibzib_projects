@@ -2,6 +2,7 @@
 Uses Open Exchange Rates API: https://openexchangerates.org
 """
 import logging
+import os
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Optional
@@ -14,22 +15,18 @@ from app.database import async_session, ExchangeRate
 logger = logging.getLogger(__name__)
 
 # Open Exchange Rates API configuration
-OPENEXCHANGERATES_APP_ID = "c6dcf85bc4fc4db19705db0bcaacfd24"
+OPENEXCHANGERATES_APP_ID = os.getenv("OPENEXCHANGERATES_APP_ID", "")
 OPENEXCHANGERATES_BASE_URL = "https://openexchangerates.org/api"
 
-# Fallback rates when API is unavailable
-FALLBACK_RATES = {
-    ("KZT", "USD"): Decimal("0.002174"),
-    ("USD", "KZT"): Decimal("460.0"),
-    ("EUR", "USD"): Decimal("1.08"),
-    ("USD", "EUR"): Decimal("0.926"),
-    ("RUB", "USD"): Decimal("0.011"),
-    ("USD", "RUB"): Decimal("90.0"),
-    ("KZT", "EUR"): Decimal("0.00201"),
-    ("EUR", "KZT"): Decimal("497.0"),
-    ("KZT", "RUB"): Decimal("0.198"),
-    ("RUB", "KZT"): Decimal("5.05"),
-}
+class CurrencyRateUnavailable(ValueError):
+    """A conversion cannot be represented as a confirmed amount."""
+
+
+def normalize_currency(value: str) -> str:
+    currency = value.strip().upper()
+    if len(currency) != 3 or not currency.isascii() or not currency.isalpha():
+        raise CurrencyRateUnavailable("Укажите код валюты из трёх латинских букв")
+    return currency
 
 
 async def get_cached_rate(from_currency: str, to_currency: str, for_date: date) -> Optional[Decimal]:
@@ -55,30 +52,10 @@ async def get_cached_rate(from_currency: str, to_currency: str, for_date: date) 
 
 async def save_rate(from_currency: str, to_currency: str, rate: Decimal, for_date: date):
     """Save exchange rate to database cache"""
+    from sqlalchemy.dialects.sqlite import insert
     async with async_session() as session:
-        # Check if exists
-        existing = await session.execute(
-            select(ExchangeRate).where(
-                and_(
-                    ExchangeRate.from_currency == from_currency.upper(),
-                    ExchangeRate.to_currency == to_currency.upper(),
-                    ExchangeRate.rate_date == for_date,
-                )
-            )
-        )
-        record = existing.scalar_one_or_none()
-        
-        if record:
-            record.rate = rate
-        else:
-            record = ExchangeRate(
-                from_currency=from_currency.upper(),
-                to_currency=to_currency.upper(),
-                rate=rate,
-                rate_date=for_date,
-            )
-            session.add(record)
-        
+        stmt = insert(ExchangeRate).values(from_currency=from_currency.upper(), to_currency=to_currency.upper(), rate=rate, rate_date=for_date)
+        await session.execute(stmt.on_conflict_do_update(index_elements=["from_currency", "to_currency", "rate_date"], set_={"rate": rate}))
         await session.commit()
 
 
@@ -92,6 +69,8 @@ async def fetch_rates_from_api(for_date: Optional[date] = None) -> Optional[dict
     
     The API returns: { "rates": { "EUR": 0.92, "KZT": 460, ... } }
     """
+    if not OPENEXCHANGERATES_APP_ID:
+        return None
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             if for_date and for_date < date.today():
@@ -111,7 +90,7 @@ async def fetch_rates_from_api(for_date: Optional[date] = None) -> Optional[dict
                 logger.info(f"Fetched {len(rates)} exchange rates from API for {for_date or 'today'}")
                 return rates
             else:
-                logger.warning(f"API returned status {response.status_code}: {response.text}")
+                logger.warning("Exchange rate API returned status %s", response.status_code)
                 return None
                 
     except httpx.TimeoutException:
@@ -155,8 +134,8 @@ async def fetch_rate_from_api(from_currency: str, to_currency: str, for_date: Op
     if not rates:
         return None
 
-    from_cur = from_currency.upper()
-    to_cur = to_currency.upper()
+    from_cur = normalize_currency(from_currency)
+    to_cur = normalize_currency(to_currency)
 
     try:
         if from_cur == "USD":
@@ -188,7 +167,7 @@ async def get_exchange_rate(from_currency: str, to_currency: str, for_date: Opti
     1. Exact date cached rate from database
     2. Fresh rate from API for that date (if available)
     3. Closest available cached rate (within 30 days)
-    4. Fallback hardcoded rates
+    4. Explicit failure; never invent a 1:1 rate
 
     Args:
         from_currency: Source currency code
@@ -197,8 +176,8 @@ async def get_exchange_rate(from_currency: str, to_currency: str, for_date: Opti
 
     Returns rate such that: amount_from * rate = amount_to
     """
-    from_cur = from_currency.upper()
-    to_cur = to_currency.upper()
+    from_cur = normalize_currency(from_currency)
+    to_cur = normalize_currency(to_currency)
     
     if from_cur == to_cur:
         return Decimal("1.0")
@@ -209,6 +188,10 @@ async def get_exchange_rate(from_currency: str, to_currency: str, for_date: Opti
     cached = await get_cached_rate(from_cur, to_cur, target_date)
     if cached:
         return cached
+
+    reverse = await get_cached_rate(to_cur, from_cur, target_date)
+    if reverse and reverse > 0:
+        return Decimal("1") / reverse
 
     # 2. Try API for that date
     api_rate = await fetch_rate_from_api(from_cur, to_cur, for_date=target_date)
@@ -221,24 +204,7 @@ async def get_exchange_rate(from_currency: str, to_currency: str, for_date: Opti
         if closest:
             return closest
 
-    # 4. Fallback to hardcoded rates
-    fallback = FALLBACK_RATES.get((from_cur, to_cur))
-    if fallback:
-        return fallback
-
-    reverse_fallback = FALLBACK_RATES.get((to_cur, from_cur))
-    if reverse_fallback and reverse_fallback != 0:
-        return Decimal("1.0") / reverse_fallback
-
-    # Try converting through USD
-    if from_cur != "USD" and to_cur != "USD":
-        rate_to_usd = FALLBACK_RATES.get((from_cur, "USD"))
-        rate_from_usd = FALLBACK_RATES.get(("USD", to_cur))
-        if rate_to_usd and rate_from_usd:
-            return rate_to_usd * rate_from_usd
-
-    # Unknown currency pair
-    return Decimal("1.0")
+    raise CurrencyRateUnavailable(f"Нет подтверждённого курса {from_cur} → {to_cur} на {target_date.isoformat()}")
 
 
 async def convert_to_usd(amount: Decimal, from_currency: str, for_date: Optional[date] = None) -> tuple[Decimal, Decimal]:
@@ -252,7 +218,10 @@ async def convert_to_usd(amount: Decimal, from_currency: str, for_date: Optional
     
     Returns: (amount_usd, exchange_rate)
     """
-    if from_currency.upper() == "USD":
+    from_currency = normalize_currency(from_currency)
+    if not amount.is_finite() or abs(amount) >= Decimal("10000000000"):
+        raise CurrencyRateUnavailable("Некорректная сумма операции")
+    if from_currency == "USD":
         return amount, Decimal("1.0")
     
     rate = await get_exchange_rate(from_currency, "USD", for_date=for_date)

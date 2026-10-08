@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sqlite3
 import subprocess
@@ -20,8 +21,8 @@ from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = Path(__file__).with_name("activity_day.schema.json")
-DB_PATH = ROOT / "data" / "main-project.db"
-OUT_ROOT = ROOT / "data" / "activity-days"
+DB_PATH = Path(os.environ.get("ACTIVITY_DB", ROOT / "data" / "main-project.db"))
+OUT_ROOT = Path(os.environ.get("ACTIVITY_BREAKDOWN_DIR", ROOT / "data" / "activity-days"))
 MODEL = "gpt-6-sol"
 REASONING = "medium"
 GAP_MINUTES = 20
@@ -340,6 +341,9 @@ def aggregate_user(con: sqlite3.Connection, row: sqlite3.Row, day: date | None) 
     events = screen_log(con, row["user_id"], utc_start, utc_end, tz)
     points = location_log(con, row["user_id"], utc_start, utc_end, tz)
     places = place_log(con, row["user_id"])
+    tombstone = OUT_ROOT / f".deleted-user-{row['user_id']}"
+    if tombstone.exists():
+        return None
     work = OUT_ROOT / str(row["user_id"])
     work.mkdir(parents=True, exist_ok=True)
     if not events and not points:
@@ -384,8 +388,13 @@ def aggregate_user(con: sqlite3.Connection, row: sqlite3.Row, day: date | None) 
         "events": len(events),
         "aggregated_at": datetime.now(timezone.utc).isoformat(),
     }
+    if tombstone.exists() or not con.execute("SELECT 1 FROM users WHERE id=?", (row["user_id"],)).fetchone():
+        shutil.rmtree(work, ignore_errors=True)
+        return None
     dest = work / f"{target.isoformat()}.json"
-    dest.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temp = dest.with_suffix(".json.tmp")
+    temp.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temp.replace(dest)
     print(f"wrote {dest}")
     return dest
 

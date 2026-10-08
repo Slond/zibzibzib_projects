@@ -7,7 +7,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Request, Form, Query, HTTPException
+from fastapi import APIRouter, Request, Form, Query, HTTPException, Depends
 from fastapi.responses import RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -34,10 +34,12 @@ from app.auth import (
     get_user_events,
     regenerate_event_webhook_token,
 )
-from app.services.currency import convert_to_usd
+from app.services.currency import convert_to_usd, get_exchange_rate, normalize_currency, CurrencyRateUnavailable
+from app.services.finance_access import authorize_finance_request, event_for_user, transaction_scope
+from app.services.recurrence import advance_run
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/finance")
+router = APIRouter(prefix="/finance", dependencies=[Depends(authorize_finance_request)])
 templates = Jinja2Templates(directory=Path(__file__).parent.parent / "templates")
 
 
@@ -45,6 +47,8 @@ async def require_finance_access(request: Request):
     """Check user has access to finance module"""
     user = await get_current_user(request)
     if not user:
+        return None
+    if user.must_change_password:
         return None
     if not user.is_admin and not await has_service_access(user.id, "finance"):
         return None
@@ -87,15 +91,15 @@ def _safe_filename_date(value: Optional[str]) -> Optional[str]:
 # ============ Webhook (Token-based, no auth) ============
 
 class WebhookData(BaseModel):
-    amount: Optional[float] = None
-    type: Optional[str] = "expense"  # "expense" or "income"
+    amount: Decimal
+    type: str = "expense"  # "expense" or "income"
     category: Optional[str] = None
     description: Optional[str] = None
     currency: Optional[str] = None
 
 
 @router.post("/api/webhook/{webhook_token}")
-async def webhook_notification(webhook_token: str, data: WebhookData = None):
+async def webhook_notification(webhook_token: str, data: WebhookData):
     """iOS Shortcut sends transaction data here.
     
     Accepts positive amount with type field:
@@ -103,7 +107,7 @@ async def webhook_notification(webhook_token: str, data: WebhookData = None):
     - type="income" -> amount stays positive
     """
     event = await get_finance_event_by_webhook(webhook_token)
-    if not event:
+    if not event or event.is_archived or not event.is_active:
         raise HTTPException(status_code=404, detail="Invalid webhook token")
 
     async with async_session() as session:
@@ -113,10 +117,14 @@ async def webhook_notification(webhook_token: str, data: WebhookData = None):
         event_fresh = event_result.scalar_one()
         
         # Parse amount (always positive from Shortcut)
-        raw_amount = abs(Decimal(str(data.amount))) if data and data.amount else Decimal("0")
+        if not data.amount.is_finite() or data.amount == 0 or abs(data.amount) >= Decimal("10000000000"):
+            raise HTTPException(422, "Invalid amount")
+        raw_amount = abs(data.amount)
         
         # Apply sign based on type
-        tx_type = (data.type or "expense").lower() if data else "expense"
+        tx_type = data.type.lower()
+        if tx_type not in {"expense", "income"}:
+            raise HTTPException(422, "Invalid transaction type")
         if tx_type == "expense":
             amount = -raw_amount
         else:
@@ -167,7 +175,7 @@ async def webhook_notification(webhook_token: str, data: WebhookData = None):
 async def webhook_get_categories(webhook_token: str):
     """Get categories for iOS Shortcut picker (simple string list)"""
     event = await get_finance_event_by_webhook(webhook_token)
-    if not event:
+    if not event or event.is_archived or not event.is_active:
         raise HTTPException(status_code=404, detail="Invalid webhook token")
 
     async with async_session() as session:
@@ -293,7 +301,7 @@ async def add_page(
                 result = await session.execute(
                     select(Transaction).where(
                         Transaction.id == edit,
-                        Transaction.account_id == user.finance_account_id
+                        await transaction_scope(user)
                     )
                 )
                 transaction = result.scalar_one_or_none()
@@ -349,6 +357,8 @@ async def add_transaction(
 
     try:
         amount_decimal = Decimal(amount.replace(",", ".").replace(" ", ""))
+        if not amount_decimal.is_finite() or abs(amount_decimal) >= Decimal("10000000000"):
+            raise ValueError("Invalid amount")
     except:
         return RedirectResponse(url=f"/finance/add?event={event_id}&error=invalid_amount", status_code=302)
 
@@ -365,22 +375,34 @@ async def add_transaction(
             pass
 
     budget_alert = None
+    selected_event = await event_for_user(user, event_id)
+    if selected_event.is_archived or not selected_event.is_active:
+        raise HTTPException(409, "Event is archived or disabled")
+    currency = currency.strip().upper()
     
     # Convert to USD (using transaction date for historical rate if needed)
     amount_usd, exchange_rate = await convert_to_usd(amount_decimal, currency, for_date=transaction_date)
+
+    budget_rates = {}
+    if category:
+        async with async_session() as rate_session:
+            currencies = (await rate_session.scalars(select(CategoryBudget.currency).join(Category).where(Category.account_id == user.finance_account_id, Category.name == category))).all()
+        for budget_currency in set(currencies):
+            budget_rates[budget_currency] = await get_exchange_rate("USD", budget_currency)
 
     async with async_session() as session:
         if transaction_id:
             result = await session.execute(
                 select(Transaction).where(
                     Transaction.id == transaction_id,
-                    Transaction.account_id == user.finance_account_id
+                    await transaction_scope(user)
                 )
             )
             transaction = result.scalar_one_or_none()
             if transaction:
                 transaction.amount = amount_decimal
                 transaction.event_id = event_id
+                transaction.account_id = selected_event.account_id
                 transaction.category = category or None
                 transaction.currency = currency
                 transaction.amount_usd = amount_usd
@@ -390,7 +412,7 @@ async def add_transaction(
                 transaction.created_by_user_id = user.id
         else:
             transaction = Transaction(
-                account_id=user.finance_account_id,
+                account_id=selected_event.account_id,
                 event_id=event_id,
                 amount=amount_decimal,
                 currency=currency,
@@ -424,23 +446,25 @@ async def add_transaction(
                             CategoryBudget.event_id == event_id,
                             CategoryBudget.event_id == None
                         )
-                    )
+                    ).order_by(CategoryBudget.event_id.is_not(None).desc(), CategoryBudget.id.desc()).limit(1)
                 )
                 budget = budget_result.scalar_one_or_none()
                 if budget:
                     # Calculate spent this month
                     now = datetime.now(tz=timezone.utc)
                     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-                    spent_result = await session.execute(
-                        select(func.sum(func.abs(Transaction.amount)))
-                        .where(
-                            Transaction.account_id == user.finance_account_id,
-                            Transaction.category == category,
-                            Transaction.amount < 0,
-                            Transaction.timestamp >= month_start,
-                        )
-                    )
-                    spent = spent_result.scalar() or 0
+                    month_end = advance_run(month_start, "monthly", anchor_day=1)
+                    spent_filters = [
+                        Transaction.account_id == selected_event.account_id,
+                        Transaction.category == category,
+                        Transaction.amount < 0,
+                        Transaction.timestamp >= month_start,
+                        Transaction.timestamp < month_end,
+                    ]
+                    if budget.event_id:
+                        spent_filters.append(Transaction.event_id == budget.event_id)
+                    spent_usd = await session.scalar(select(func.sum(func.abs(func.coalesce(Transaction.amount_usd, case((Transaction.currency == "USD", Transaction.amount), else_=None))))).where(*spent_filters)) or Decimal("0")
+                    spent = spent_usd * budget_rates[budget.currency]
                     spent_percent = (float(spent) / float(budget.monthly_limit)) * 100 if budget.monthly_limit else 0
                     
                     if spent_percent >= budget.alert_threshold:
@@ -515,7 +539,7 @@ async def history_page(
             selected_event = await get_finance_event_by_id(event)
 
         async with async_session() as session:
-            scope_filters = [Transaction.account_id == user.finance_account_id]
+            scope_filters = [await transaction_scope(user)]
             if event:
                 scope_filters.append(Transaction.event_id == event)
             if since:
@@ -545,7 +569,7 @@ async def history_page(
             result = await session.execute(query)
             transactions = result.scalars().all()
 
-            usd_amount = func.coalesce(Transaction.amount_usd, Transaction.amount)
+            usd_amount = func.coalesce(Transaction.amount_usd, case((Transaction.currency == "USD", Transaction.amount), else_=None))
             cat_result = await session.execute(
                 select(
                     Transaction.category.label("name"),
@@ -617,7 +641,7 @@ async def export_transactions_csv(
     if kind not in {"all", "expense", "income"}:
         kind = "all"
 
-    filters = [Transaction.account_id == user.finance_account_id]
+    filters = [await transaction_scope(user)]
     if selected_event_id:
         filters.append(Transaction.event_id == selected_event_id)
     if since:
@@ -700,7 +724,7 @@ async def delete_transaction(request: Request, transaction_id: int):
         result = await session.execute(
             select(Transaction).where(
                 Transaction.id == transaction_id,
-                Transaction.account_id == user.finance_account_id
+                await transaction_scope(user)
             )
         )
         transaction = result.scalar_one_or_none()
@@ -731,7 +755,7 @@ async def bulk_delete_transactions(request: Request):
                 result = await session.execute(
                     select(Transaction).where(
                         Transaction.id == tid_int,
-                        Transaction.account_id == user.finance_account_id
+                        await transaction_scope(user)
                     )
                 )
                 transaction = result.scalar_one_or_none()
@@ -818,6 +842,7 @@ async def update_event_settings(
     if not user:
         return RedirectResponse(url="/login", status_code=302)
 
+    default_currency = normalize_currency(default_currency)
     async with async_session() as session:
         result = await session.execute(
             select(FinanceEvent).where(FinanceEvent.id == event_id)
@@ -852,6 +877,7 @@ async def create_event(
     if not user or not user.finance_account_id:
         return RedirectResponse(url="/login", status_code=302)
 
+    default_currency = normalize_currency(default_currency)
     async with async_session() as session:
         event = FinanceEvent(
             account_id=user.finance_account_id,
@@ -908,8 +934,8 @@ async def delete_event(request: Request, event_id: int):
 @router.get("/api/transactions")
 async def api_get_transactions(
     request: Request,
-    limit: int = Query(50, le=200),
-    offset: int = Query(0),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     event_id: int = Query(None),
     category: str = Query(None),
 ):
@@ -918,7 +944,7 @@ async def api_get_transactions(
         raise HTTPException(status_code=401)
 
     async with async_session() as session:
-        query = select(Transaction).where(Transaction.account_id == user.finance_account_id)
+        query = select(Transaction).where(await transaction_scope(user))
         if event_id:
             query = query.where(Transaction.event_id == event_id)
         if category:
@@ -967,7 +993,7 @@ async def api_get_categories(request: Request):
 @router.get("/api/stats")
 async def api_get_stats(
     request: Request,
-    days: int = Query(30, le=365),
+    days: int = Query(30, ge=1, le=365),
     event_id: int = Query(None),
 ):
     user = await require_finance_access(request)
@@ -978,14 +1004,14 @@ async def api_get_stats(
 
     async with async_session() as session:
         base_filter = [
-            Transaction.account_id == user.finance_account_id,
+            await transaction_scope(user),
             Transaction.timestamp >= since,
         ]
         if event_id:
             base_filter.append(Transaction.event_id == event_id)
         
-        # Use amount_usd for consistent currency, fallback to amount if null
-        usd_amount = func.coalesce(Transaction.amount_usd, Transaction.amount)
+        # Unconverted non-USD operations are excluded and reported explicitly.
+        usd_amount = func.coalesce(Transaction.amount_usd, case((Transaction.currency == "USD", Transaction.amount), else_=None))
         
         result = await session.execute(
             select(
@@ -997,6 +1023,7 @@ async def api_get_stats(
             .group_by(Transaction.category)
         )
         rows = result.all()
+        unconverted_count = await session.scalar(select(func.count(Transaction.id)).where(*base_filter, usd_amount.is_(None)))
 
         total_result = await session.execute(
             select(func.sum(usd_amount))
@@ -1018,6 +1045,7 @@ async def api_get_stats(
         income = income_result.scalar() or 0
 
         return {
+            "unconverted_count": unconverted_count,
             "period_days": days,
             "event_id": event_id,
             "currency": "USD",
@@ -1027,7 +1055,7 @@ async def api_get_stats(
             "by_category": [
                 {
                     "category": row.category or "Без категории",
-                    "total": float(row.total),
+                    "total": float(row.total or 0),
                     "count": row.count,
                 }
                 for row in rows
@@ -1229,6 +1257,7 @@ async def create_budget(
     request: Request,
     category_id: int = Form(...),
     monthly_limit: str = Form(...),
+    currency: str = Form("KZT"),
     event_id: int = Form(None),
     alert_threshold: int = Form(70),
 ):
@@ -1238,9 +1267,14 @@ async def create_budget(
 
     try:
         limit_decimal = Decimal(monthly_limit.replace(",", ".").replace(" ", ""))
+        if not limit_decimal.is_finite() or limit_decimal <= 0:
+            raise ValueError("Invalid budget")
     except:
         return RedirectResponse(url="/finance/budgets?error=invalid_amount", status_code=302)
 
+    if not 1 <= alert_threshold <= 100:
+        raise HTTPException(422, "Invalid threshold")
+    await get_exchange_rate(currency, "USD")
     async with async_session() as session:
         # Check if budget exists for this category/event
         existing = await session.execute(
@@ -1253,12 +1287,14 @@ async def create_budget(
         
         if budget:
             budget.monthly_limit = limit_decimal
+            budget.currency = currency.upper()
             budget.alert_threshold = alert_threshold
         else:
             budget = CategoryBudget(
                 category_id=category_id,
                 event_id=event_id if event_id else None,
                 monthly_limit=limit_decimal,
+                currency=currency.upper(),
                 alert_threshold=alert_threshold,
             )
             session.add(budget)
@@ -1362,19 +1398,18 @@ async def create_recurring(
 
     try:
         amount_decimal = Decimal(amount.replace(",", ".").replace(" ", ""))
+        if not amount_decimal.is_finite() or abs(amount_decimal) >= Decimal("10000000000"):
+            raise ValueError("Invalid amount")
     except:
         return RedirectResponse(url="/finance/recurring?error=invalid_amount", status_code=302)
 
     # Calculate next run date
     now = datetime.now(tz=timezone.utc)
-    if frequency == "daily":
-        next_run = now + timedelta(days=1)
-    elif frequency == "weekly":
-        next_run = now + timedelta(weeks=1)
-    elif frequency == "monthly":
-        next_run = now + timedelta(days=30)
-    else:  # every_n_days
-        next_run = now + timedelta(days=frequency_value)
+    try:
+        next_run = advance_run(now, frequency, frequency_value, now.day)
+    except ValueError:
+        raise HTTPException(422, "Invalid recurrence frequency")
+    await convert_to_usd(amount_decimal, currency)
 
     async with async_session() as session:
         recurring = RecurringTransaction(
@@ -1385,6 +1420,7 @@ async def create_recurring(
             description=description,
             frequency=frequency,
             frequency_value=frequency_value,
+            anchor_day=now.day,
             next_run=next_run,
             is_active=True,
         )
@@ -1468,7 +1504,7 @@ async def analytics_page(
 @router.get("/api/analytics/daily")
 async def api_analytics_daily(
     request: Request,
-    days: int = Query(30, le=365),
+    days: int = Query(30, ge=1, le=365),
     event_id: int = Query(None),
     date_from: str = Query(None),
     date_to: str = Query(None),
@@ -1493,7 +1529,7 @@ async def api_analytics_daily(
 
     async with async_session() as session:
         base_filter = [
-            Transaction.account_id == user.finance_account_id,
+            await transaction_scope(user),
             Transaction.timestamp >= since,
         ]
         if until:
@@ -1501,8 +1537,8 @@ async def api_analytics_daily(
         if event_id:
             base_filter.append(Transaction.event_id == event_id)
         
-        # Use amount_usd for consistent currency, fallback to amount if null
-        usd_amount = func.coalesce(Transaction.amount_usd, Transaction.amount)
+        # Unconverted non-USD operations are excluded and reported explicitly.
+        usd_amount = func.coalesce(Transaction.amount_usd, case((Transaction.currency == "USD", Transaction.amount), else_=None))
         
         # Daily aggregation (in USD)
         result = await session.execute(
@@ -1530,7 +1566,7 @@ async def api_analytics_daily(
 @router.get("/api/analytics/by-category")
 async def api_analytics_by_category(
     request: Request,
-    days: int = Query(30, le=365),
+    days: int = Query(30, ge=1, le=365),
     event_id: int = Query(None),
     date_from: str = Query(None),
     date_to: str = Query(None),
@@ -1555,7 +1591,7 @@ async def api_analytics_by_category(
 
     async with async_session() as session:
         base_filter = [
-            Transaction.account_id == user.finance_account_id,
+            await transaction_scope(user),
             Transaction.timestamp >= since,
             Transaction.amount < 0,  # Only expenses
         ]
@@ -1564,8 +1600,8 @@ async def api_analytics_by_category(
         if event_id:
             base_filter.append(Transaction.event_id == event_id)
         
-        # Use amount_usd for consistent currency, fallback to amount if null
-        usd_amount = func.coalesce(Transaction.amount_usd, Transaction.amount)
+        # Unconverted non-USD operations are excluded and reported explicitly.
+        usd_amount = func.coalesce(Transaction.amount_usd, case((Transaction.currency == "USD", Transaction.amount), else_=None))
         
         result = await session.execute(
             select(
@@ -1579,10 +1615,12 @@ async def api_analytics_by_category(
         )
         rows = result.all()
         
+        unconverted_count = await session.scalar(select(func.count(Transaction.id)).where(*base_filter, usd_amount.is_(None)))
         total = sum(float(row.total or 0) for row in rows)
 
         return {
             "currency": "USD",
+            "unconverted_count": unconverted_count,
             "total": total,
             "categories": [
                 {

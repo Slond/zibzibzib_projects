@@ -31,7 +31,7 @@ textarea {
 </div>
 <div class="content" style="padding-bottom: 48px;">
     <p style="margin-bottom: 12px;"><a href="/vpn">← к списку</a></p>
-    {% if fresh %}<div class="banner ok">Ключ создан. Вставьте строку в AmneziaVPN 203.0.113.13 или новее.</div>{% endif %}
+    {% if fresh %}<div class="banner ok">Ключ создан. Импортируйте строку vpn:// или QR в AmneziaVPN с поддержкой AWG 3.1.</div>{% endif %}
     {% if client.revoked_at %}<div class="banner warn">Ключ отозван. Туннель его больше не пустит.</div>{% endif %}
     <div class="card">
         {% if stats %}
@@ -39,14 +39,15 @@ textarea {
         <p class="note" style="margin: 8px 0 16px;">Сегодня {{ stats.today }} · всего {{ stats.total }} · ↓ {{ stats.down }} · ↑ {{ stats.up }}</p>
         {% endif %}
         {% if link %}
+        <p class="banner warn">Если старый профиль не подключается, удалите его из AmneziaVPN и импортируйте эту строку vpn:// через «Добавить VPN → Ключ». Импорт .conf в некоторых версиях теряет параметры AWG 3.1.</p>
         <label class="note">vpn:// для AmneziaVPN</label>
         <textarea id="uri" readonly>{{ link }}</textarea>
         <div class="actions">
             <button class="btn" type="button" id="copy">Скопировать ключ</button>
-            <a class="btn secondary" href="/vpn/clients/{{ client.id }}/conf">Скачать .conf</a>
+            <a class="btn secondary" href="/vpn/clients/{{ client.id }}/conf"> .conf для совместимого клиента</a>
         </div>
         <div class="qr">
-            <img alt="QR ключа" src="/vpn/clients/{{ client.id }}/qr.svg">
+            <img alt="QR ключа" src="/vpn/clients/{{ client.id }}/qr.png">
         </div>
         <p class="note" style="margin-top: 8px;">Та же строка, что выше. Она длинная специально: внутри весь профиль, не один ключ. Если камера не берёт код, вставьте строку в AmneziaVPN.</p>
         {% else %}

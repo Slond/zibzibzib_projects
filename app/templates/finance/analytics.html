@@ -429,6 +429,9 @@ async function loadAnalytics() {
         
         const dailyData = await dailyRes.json();
         const categoryData = await categoryRes.json();
+        const warning = document.getElementById('rate-warning');
+        warning.hidden = !categoryData.unconverted_count;
+        warning.textContent = `Не включены в итог $: ${categoryData.unconverted_count || 0} операций без подтверждённого курса.`;
         
         // Update summary (all values in USD)
         const totalExpenses = dailyData.reduce((sum, d) => sum + d.expenses, 0);
@@ -541,7 +544,7 @@ function renderCategoryChart(data) {
     // Render category list
     const listHtml = data.categories.map((c, i) => `
         <div class="category-row">
-            <span class="category-name">${c.category}</span>
+            <span class="category-name">${escapeHTML(c.category)}</span>
             <div class="category-bar-container">
                 <div class="category-bar">
                     <div class="category-bar-fill" style="width:${c.percent}%;background:${colors[i % colors.length]}"></div>

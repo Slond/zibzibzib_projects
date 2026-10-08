@@ -273,6 +273,9 @@ async function loadData(eventId = null) {
         ]);
         
         const stats = await statsRes.json();
+        const warning = document.getElementById('rate-warning');
+        warning.hidden = !stats.unconverted_count;
+        warning.textContent = `Не включены в итог $: ${stats.unconverted_count || 0} операций без подтверждённого курса.`;
         const transactions = await transRes.json();
         
         document.getElementById('total-month').textContent = '$' + formatAmount(stats.total);
@@ -286,15 +289,15 @@ async function loadData(eventId = null) {
             container.innerHTML = transactions.map(t => `
                 <a href="/finance/add?${t.event_id ? 'event=' + t.event_id + '&' : ''}edit=${t.id}" class="transaction-item">
                     <div class="transaction-info">
-                        <span class="transaction-merchant">${t.description || 'Операция'}</span>
+                        <span class="transaction-merchant">${escapeHTML(t.description || 'Операция')}</span>
                         <span class="transaction-meta">
-                            ${t.category ? `<span class="category-chip">${t.category}</span>` : ''}
+                            ${t.category ? `<span class="category-chip">${escapeHTML(t.category)}</span>` : ''}
                             ${formatDate(t.timestamp)}
                         </span>
                     </div>
                     <span class="transaction-amount ${t.amount < 0 ? 'negative' : 'positive'}">
                         ${t.amount > 0 ? '+' : ''}${formatAmount(t.amount)}
-                        <span class="currency-badge">${t.currency || ''}</span>
+                        <span class="currency-badge">${escapeHTML(t.currency || '')}</span>
                     </span>
                 </a>
             `).join('');

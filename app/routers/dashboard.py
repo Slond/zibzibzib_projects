@@ -1,5 +1,6 @@
 """Dashboard router - main page with service tiles and admin panel"""
 import logging
+import secrets
 from pathlib import Path
 
 from fastapi import APIRouter, Request, Form
@@ -143,10 +144,12 @@ async def admin_reset_password(request: Request, user_id: int):
         result = await session.execute(select(User).where(User.id == user_id))
         target_user = result.scalar_one_or_none()
         if target_user:
-            target_user.password_hash = hash_password("123456")
+            temporary_password = secrets.token_urlsafe(12)
+            target_user.password_hash = hash_password(temporary_password)
             target_user.must_change_password = True
+            target_user.session_key = secrets.token_urlsafe(32)
             await session.commit()
-
+            return templates.TemplateResponse(request=request, name="dashboard/password_reset.html", context={"user": user, "email": target_user.email, "temporary_password": temporary_password}, headers={"Cache-Control": "no-store"})
     return RedirectResponse(url="/admin", status_code=302)
 
 
@@ -365,6 +368,9 @@ async def profile_update_password(
 
         db_user.password_hash = hash_password(new_password)
         db_user.must_change_password = False
+        db_user.session_key = secrets.token_urlsafe(32)
         await session.commit()
 
-    return RedirectResponse(url="/profile?success=Пароль изменён", status_code=302)
+    response = RedirectResponse(url="/login", status_code=302)
+    response.delete_cookie("session")
+    return response

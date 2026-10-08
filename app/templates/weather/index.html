@@ -439,11 +439,11 @@ function renderStats() {
                  style="${isDisabled ? 'opacity:0.4;cursor:not-allowed;' : ''}">
                 <div class="stat-icon">${icon}</div>
                 <div class="stat-value ${colorClass}">
-                    ${typeof item.value === 'number' ? item.value.toFixed(1) : item.value}
-                    <span style="font-size:12px;color:rgba(255,255,255,0.5);white-space:nowrap;">${formatUnit(item.unit)}</span>
+                    ${typeof item.value === 'number' ? item.value.toFixed(1) : escapeHTML(item.value)}
+                    <span style="font-size:12px;color:rgba(255,255,255,0.5);white-space:nowrap;">${escapeHTML(formatUnit(item.unit))}</span>
                 </div>
-                <div class="stat-label">${label}</div>
-                <div class="stat-device">${item.device_name}</div>
+                <div class="stat-label">${escapeHTML(label)}</div>
+                <div class="stat-device">${escapeHTML(item.device_name)}</div>
             </div>
         `;
     }).join('');

@@ -118,7 +118,8 @@
                     </select>
                 </div>
                 <div class="form-group">
-                    <label>Лимит в месяц</label>
+                    <label>Лимит в месяц (KZT)</label>
+                    <input type="hidden" name="currency" value="KZT">
                     <input type="text" name="monthly_limit" placeholder="50000" inputmode="decimal" required>
                 </div>
             </div>
@@ -159,7 +160,7 @@
             {% endif %}
         </div>
         <div class="budget-amount">
-            Лимит: {{ '{:,.0f}'.format(budget.monthly_limit|float).replace(',', ' ') }} в месяц
+            Лимит: {{ '{:,.0f}'.format(budget.monthly_limit|float).replace(',', ' ') }} {{ budget.currency }} в месяц
         </div>
         <div class="budget-progress">
             <div class="budget-progress-bar safe" style="width: 0%"></div>

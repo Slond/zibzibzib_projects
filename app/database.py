@@ -1,5 +1,6 @@
 import os
 import secrets
+import asyncio
 from datetime import datetime, timezone
 
 from sqlalchemy import (
@@ -15,6 +16,7 @@ from sqlalchemy import (
     String,
     Text,
     text,
+    event,
 )
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
@@ -24,6 +26,15 @@ from app.config import DATABASE_URL
 os.makedirs("./data", exist_ok=True)
 
 engine = create_async_engine(DATABASE_URL, echo=False)
+
+
+@event.listens_for(engine.sync_engine, "connect")
+def enable_sqlite_constraints(connection, _record):
+    if engine.url.get_backend_name() == "sqlite":
+        cursor = connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.close()
 async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 Base = declarative_base()
@@ -44,6 +55,7 @@ def generate_webhook_token():
 class User(Base):
     """System user - unified for all modules"""
     __tablename__ = "users"
+    __table_args__ = {"sqlite_autoincrement": True}
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     email = Column(String, unique=True, nullable=False, index=True)
@@ -51,6 +63,7 @@ class User(Base):
     name = Column(String, nullable=True)
     is_admin = Column(Boolean, default=False)
     must_change_password = Column(Boolean, default=True)
+    session_key = Column(String, nullable=False, default=generate_webhook_token)
     finance_account_id = Column(Integer, ForeignKey("finance_accounts.id"), nullable=True)
     created_at = Column(DateTime, default=utcnow)
 
@@ -166,12 +179,15 @@ class Transaction(Base):
     timestamp = Column(DateTime, default=utcnow, index=True)
     source = Column(String, default="manual")
     created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    recurring_id = Column(Integer, ForeignKey("recurring_transactions.id", ondelete="SET NULL"), nullable=True)
+    scheduled_for = Column(DateTime, nullable=True)
 
     event = relationship("FinanceEvent", back_populates="transactions")
 
     __table_args__ = (
         Index("idx_transaction_account_timestamp", "account_id", "timestamp"),
         Index("idx_transaction_event_timestamp", "event_id", "timestamp"),
+        Index("idx_transaction_recurring_run", "recurring_id", "scheduled_for", unique=True),
     )
 
 
@@ -221,6 +237,7 @@ class CategoryBudget(Base):
     category_id = Column(Integer, ForeignKey("finance_categories.id"), nullable=False, index=True)
     event_id = Column(Integer, ForeignKey("finance_events.id"), nullable=True, index=True)
     monthly_limit = Column(Numeric(12, 2), nullable=False)
+    currency = Column(String, nullable=False, default="KZT")
     alert_threshold = Column(Integer, default=70)  # percent
     created_at = Column(DateTime, default=utcnow)
 
@@ -244,6 +261,7 @@ class RecurringTransaction(Base):
     description = Column(String, nullable=True)
     frequency = Column(String, nullable=False)  # "daily", "weekly", "monthly", "every_n_days"
     frequency_value = Column(Integer, default=1)  # N for "every_n_days"
+    anchor_day = Column(Integer, nullable=True)
     next_run = Column(DateTime, nullable=False)
     last_run = Column(DateTime, nullable=True)
     is_active = Column(Boolean, default=True)
@@ -409,18 +427,19 @@ class ActivityEvent(Base):
 # Database initialization
 # ============================================
 
-def _ensure_activity_place_columns(connection):
-    """create_all does not add columns to a table that already exists."""
-    rows = connection.execute(text("PRAGMA table_info(activity_places)")).fetchall()
-    names = {row[1] for row in rows}
-    if names and "corrected_at" not in names:
-        connection.execute(text("ALTER TABLE activity_places ADD COLUMN corrected_at DATETIME"))
-
-
 async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        await conn.run_sync(_ensure_activity_place_columns)
+    """Use the same versioned schema for startup and command-line upgrades."""
+    from pathlib import Path
+    from alembic import command
+    from alembic.config import Config
+
+    def upgrade():
+        root = Path(__file__).resolve().parents[1]
+        config = Config(str(root / "alembic.ini"))
+        config.set_main_option("script_location", str(root / "migrations"))
+        command.upgrade(config, "head")
+
+    await asyncio.to_thread(upgrade)
 
 
 async def get_session() -> AsyncSession:

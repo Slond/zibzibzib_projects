@@ -16,6 +16,8 @@ from app.database import (
 )
 from app.services.yandex_client import YandexSmartHomeClient
 from app.services.iqair_client import IQAirClient
+from app.services.currency import convert_to_usd, CurrencyRateUnavailable
+from app.services.recurrence import advance_run
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +116,13 @@ async def process_recurring_transactions():
             
             logger.info(f"Found {len(due_recurring)} due recurring transactions")
             
+            converted = {}
+            for rec in due_recurring:
+                try:
+                    converted[rec.id] = await convert_to_usd(rec.amount, rec.currency, for_date=rec.next_run.date())
+                except CurrencyRateUnavailable as exc:
+                    logger.warning("Recurring %s postponed: %s", rec.id, exc)
+
             for rec in due_recurring:
                 # Get event to find account_id
                 event_result = await session.execute(
@@ -123,6 +132,15 @@ async def process_recurring_transactions():
                 
                 if not event:
                     logger.warning(f"Event {rec.event_id} not found for recurring {rec.id}")
+                    continue
+                if event.is_archived or not event.is_active:
+                    continue
+                scheduled_for = rec.next_run
+                if rec.id not in converted:
+                    continue
+                amount_usd, rate = converted[rec.id]
+                existing = await session.scalar(select(Transaction.id).where(Transaction.recurring_id == rec.id, Transaction.scheduled_for == scheduled_for))
+                if existing:
                     continue
                 
                 # Get category name if set
@@ -141,6 +159,10 @@ async def process_recurring_transactions():
                     event_id=rec.event_id,
                     amount=rec.amount,
                     currency=rec.currency,
+                    amount_usd=amount_usd,
+                    exchange_rate=rate,
+                    recurring_id=rec.id,
+                    scheduled_for=scheduled_for,
                     category=category_name,
                     description=f"🔄 {rec.description}" if rec.description else "🔄 Повторяющаяся",
                     timestamp=now,
@@ -150,14 +172,10 @@ async def process_recurring_transactions():
                 
                 # Update next_run
                 rec.last_run = now
-                if rec.frequency == "daily":
-                    rec.next_run = now + timedelta(days=1)
-                elif rec.frequency == "weekly":
-                    rec.next_run = now + timedelta(weeks=1)
-                elif rec.frequency == "monthly":
-                    rec.next_run = now + timedelta(days=30)
-                else:  # every_n_days
-                    rec.next_run = now + timedelta(days=rec.frequency_value)
+                next_run = scheduled_for.replace(tzinfo=timezone.utc)
+                while next_run <= now:
+                    next_run = advance_run(next_run, rec.frequency, rec.frequency_value, rec.anchor_day)
+                rec.next_run = next_run
                 
                 logger.info(f"Created transaction from recurring {rec.id}: {rec.amount} {rec.currency}")
             

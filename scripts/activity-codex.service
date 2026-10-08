@@ -1,0 +1,16 @@
+[Unit]
+Description=Activity day aggregation worker
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/zibzibzib_projects
+ExecStart=/usr/bin/python3 /opt/zibzibzib_projects/scripts/activity_codex_watch.py
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

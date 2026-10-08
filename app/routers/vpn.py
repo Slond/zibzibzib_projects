@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import logging
 from pathlib import Path
 from urllib.parse import quote
@@ -27,6 +28,8 @@ async def gate(request: Request):
         return RedirectResponse(url="/login", status_code=302)
     if user.must_change_password:
         return RedirectResponse(url="/change-password", status_code=302)
+    if not user.is_admin:
+        raise HTTPException(403, "VPN administration requires administrator access")
     if not await has_service_access(user.id, "vpn"):
         return RedirectResponse(url="/", status_code=302)
     return user
@@ -124,7 +127,7 @@ async def vpn_conf(request: Request, client_id: int):
     )
 
 
-@router.get("/clients/{client_id}/qr.svg")
+@router.get("/clients/{client_id}/qr.png")
 async def vpn_qr(request: Request, client_id: int):
     user = await gate(request)
     if not isinstance(user, User):
@@ -136,17 +139,13 @@ async def vpn_qr(request: Request, client_id: int):
         store.close()
     if row is None or not row.conf.strip():
         raise HTTPException(status_code=404, detail="Нет ключа")
-    try:
-        svg = segno.make(client_link(row.conf, row.name), error="l").svg_inline(
-            scale=3, dark="#000", light="#fff"
-        )
-    except Exception:
-        svg = (
-            '<svg xmlns="http://www.w3.org/2000/svg" width="440" height="48">'
-            '<rect width="100%" height="100%" fill="#fff"/>'
-            '<text y="30" fill="#111" font-size="14">Ключ длинный для QR — скопируйте строку</text></svg>'
-        )
-    return Response(content=svg, media_type="image/svg+xml")
+    # PNG, same as the working Amnezia panels. svg_inline() omits xmlns, so a
+    # browser will not paint it when the file is loaded through <img>.
+    buf = io.BytesIO()
+    segno.make(client_link(row.conf, row.name), error="l").save(
+        buf, kind="png", scale=6, dark="#000", light="#fff"
+    )
+    return Response(content=buf.getvalue(), media_type="image/png")
 
 
 @router.post("/clients/{client_id}/revoke")
