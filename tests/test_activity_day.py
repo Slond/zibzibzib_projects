@@ -1,484 +1,295 @@
-import json
-import tempfile
-import unittest
-from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
-from zoneinfo import ZoneInfo
+"""Behavioral checks for truthful activity time and location coverage."""
 
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from app.services.activity_day import (
     GeoPoint,
     PlaceSignature,
     ScreenSample,
-    day_path,
-    is_old_codex,
-    km_from_home,
     merge_day,
     present_day,
-    read_day,
+    km_from_home,
 )
+from app.services.activity_pipeline import bounds, signatures_from_places
 
 TZ = ZoneInfo("Asia/Almaty")
 DAY = date(2026, 9, 27)
 HOME = (43.232226, 76.955359)
-CAFE = (43.232515, 76.953059)
-POINT_1330 = (43.23250, 76.95632)
-POINT_1430 = (43.23235, 76.95318)
-POINT_1930 = (43.23283, 76.95706)
-POINT_2215 = (43.23254, 76.95624)
 
 
-def at(hour, minute):
-    return datetime(2026, 9, 27, hour, minute, tzinfo=TZ)
+def at(h, m=0):
+    return datetime(2026, 9, 27, h, m, tzinfo=TZ)
 
 
-def point(hour, minute, lat, lon):
-    return GeoPoint(at(hour, minute), lat, lon)
+def sample(h, m=0, **kw):
+    return ScreenSample(at(h, m), "Mac", "Editor", "document", device_id=1, **kw)
 
 
-def screen(hour, minute, device, app, title, ssid=None):
-    return ScreenSample(at(hour, minute), device, app, title, ssid)
-
-
-def covers(rows, hour, minute):
-    moment = at(hour, minute)
-    found = []
-    for row in rows:
-        start = datetime.fromisoformat(row["start"])
-        end = datetime.fromisoformat(row["end"])
-        if start <= moment < end:
-            found.append(row)
-    return found
-
-
-def september_27():
-    points = []
-    hour, minute = 3, 1
-    while (hour, minute) <= (13, 0):
-        points.append(point(hour, minute, *HOME))
-        minute += 30
-        hour += minute // 60
-        minute %= 60
-    points.append(point(13, 30, *POINT_1330))
-    points.append(point(14, 0, *CAFE))
-    points.append(point(14, 30, *POINT_1430))
-    for hour, minute in (
-        (15, 0),
-        (15, 30),
-        (16, 0),
-        (16, 30),
-        (17, 0),
-        (17, 30),
-        (18, 0),
-        (18, 15),
-        (18, 30),
-        (18, 45),
-        (19, 0),
-        (19, 15),
-    ):
-        points.append(point(hour, minute, *HOME))
-    points.append(point(19, 30, *POINT_1930))
-    hour, minute = 19, 45
-    while (hour, minute) <= (23, 45):
-        lat, lon = POINT_2215 if (hour, minute) == (22, 15) else HOME
-        points.append(point(hour, minute, lat, lon))
-        minute += 15
-        hour += minute // 60
-        minute %= 60
-    origin = datetime(2026, 9, 27, tzinfo=TZ)
-    screens = []
-    for minute in range(17 * 60 + 21, 19 * 60 + 15):
-        screens.append(ScreenSample(origin + timedelta(minutes=minute), "Macbook", "Cursor", "activity.py"))
-    for minute in range(15 * 60 + 48, 16 * 60 + 22):
-        screens.append(ScreenSample(origin + timedelta(minutes=minute), "PC", "dota2", "Dota 2"))
-    for minute in range(16 * 60 + 17, 16 * 60 + 23):
-        screens.append(ScreenSample(origin + timedelta(minutes=minute), "Macbook", "Cursor", "activity.py"))
-    created = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    signatures = [
-        PlaceSignature("Дом", *HOME, "Veter_2", created),
-        PlaceSignature("Cafe Main", *CAFE, None, created),
+def active(rows, at):
+    return [
+        r
+        for r in rows
+        if datetime.fromisoformat(r["start"]) <= at < datetime.fromisoformat(r["end"])
     ]
-    return points, screens, signatures
 
 
-class MergeDayTest(unittest.TestCase):
-    def test_labeled_27_september(self):
-        points, screens, signatures = september_27()
-        day = merge_day(DAY, TZ, points, screens, signatures, sample_minutes=1)
+def seconds(rows):
+    return sum(
+        (
+            datetime.fromisoformat(r["end"]) - datetime.fromisoformat(r["start"])
+        ).total_seconds()
+        for r in rows
+    )
 
-        cafe = covers(day["body"], 14, 15)[0]
-        self.assertEqual(cafe["kind"], "stay")
-        self.assertEqual(cafe["name"], "Cafe Main")
-        self.assertEqual(covers(day["screen"], 14, 15), [])
 
-        road = covers(day["body"], 13, 30)[0]
-        self.assertEqual(road["kind"], "travel")
+def test_title_changes_keep_observed_minutes():
+    events = [
+        ScreenSample(
+            at(10) + timedelta(minutes=i), "Mac", "Browser", f"tab {i}", device_id=1
+        )
+        for i in range(30)
+    ]
+    doc = merge_day(DAY, TZ, [], events)
+    assert seconds(doc["screen"]) == 1800
+    assert present_day(doc)["screen_sum"] == "30 мин"
+    assert doc["screen"][0]["title"] == "tab 0"
 
-        home = covers(day["body"], 17, 30)[0]
-        self.assertEqual(home["kind"], "stay")
-        self.assertEqual(home["name"], "Дом")
-        person = covers(day["screen"], 17, 30)[0]
-        self.assertEqual(person["device"], "Macbook")
-        self.assertEqual(covers(day["agent"], 17, 30), [])
 
-        dispute = covers(day["disputes"], 16, 18)[0]
-        self.assertEqual(dispute["winner"], "PC")
-        self.assertEqual(covers(day["screen"], 16, 18)[0]["device"], "PC")
-        self.assertEqual(covers(day["agent"], 16, 18)[0]["device"], "Macbook")
+def test_sparse_events_do_not_invent_gap_activity():
+    doc = merge_day(DAY, TZ, [], [sample(10), sample(11)])
+    assert seconds(doc["screen"]) == 120
+    assert not active(doc["screen"], at(10, 30))
 
-        self.assertEqual(covers(day["body"], 22, 15)[0]["kind"], "stay")
-        self.assertEqual(covers(day["body"], 19, 30)[0]["kind"], "travel")
 
-    def test_half_up_kilometers(self):
-        self.assertEqual(km_from_home(1250), "1.3 км от дома")
-        self.assertEqual(km_from_home(1249), "1.2 км от дома")
+def test_stored_sampling_interval_survives_settings_changes():
+    doc = merge_day(DAY, TZ, [], [sample(10, sample_minutes=5)], sample_minutes=1)
+    assert seconds(doc["screen"]) == 300
 
-    def test_nearby_place_beats_the_network_name(self):
-        created = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        points = [point(12, 0, *HOME), point(12, 30, *HOME)]
-        screens = [
-            screen(12, 10, "Macbook", "Cursor", "notes", "OtherNet"),
-            screen(12, 11, "Macbook", "Cursor", "notes", "OtherNet"),
+
+def test_lone_computer_use_is_agent():
+    doc = merge_day(
+        DAY,
+        TZ,
+        [],
+        [ScreenSample(at(10), "Mac", "ChatGPT", "Computer Use Controls", device_id=1)],
+    )
+    assert not doc["screen"] and seconds(doc["agent"]) == 60
+
+
+def test_idle_is_preserved_but_not_asserted_as_human_or_agent():
+    doc = merge_day(DAY, TZ, [], [sample(10, idle_seconds=600)], idle_minutes=5)
+    assert not doc["screen"] and not doc["agent"]
+    assert seconds(doc["uncertain"]) == 60
+    assert len(present_day(doc)["columns"]) == 4
+
+
+def test_identical_device_names_do_not_merge_devices():
+    screens = [sample(10), ScreenSample(at(10), "Mac", "Game", "Game", device_id=2)]
+    doc = merge_day(DAY, TZ, [], screens)
+    assert seconds(doc["screen"]) == 60 and seconds(doc["uncertain"]) == 60
+    assert {r["device_id"] for key in ("screen", "uncertain") for r in doc[key]} == {
+        1,
+        2,
+    }
+    assert not doc["agent"]
+
+
+def test_contiguous_conflict_is_one_explanation():
+    screens = []
+    for i in range(30):
+        screens += [
+            ScreenSample(
+                at(10) + timedelta(minutes=i), "PC", "Game", "Game", device_id=1
+            ),
+            ScreenSample(
+                at(10) + timedelta(minutes=i, seconds=10),
+                "Mac",
+                "Editor",
+                "Editor",
+                device_id=2,
+            ),
         ]
-        day = merge_day(
-            DAY,
-            TZ,
-            points,
-            screens,
-            [PlaceSignature("Дом", *HOME, "Veter_2", created)],
+    doc = merge_day(DAY, TZ, [], screens)
+    assert len(doc["disputes"]) == 1
+    assert seconds(doc["screen"]) == 1810
+    assert not doc["agent"]
+
+
+def test_overlapping_agent_durations_use_union():
+    rows = [
+        dict(start=at(10).isoformat(), end=at(11).isoformat(), title="A"),
+        dict(start=at(10, 30).isoformat(), end=at(11, 30).isoformat(), title="B"),
+    ]
+    assert present_day({"agent": rows})["agent_sum"] == "1 ч 30 мин"
+
+
+def test_today_stops_at_now():
+    doc = merge_day(
+        DAY,
+        TZ,
+        [GeoPoint(at(10), *HOME), GeoPoint(at(10, 15), *HOME)],
+        [sample(10, 15)],
+        now=at(10, 15) + timedelta(seconds=10),
+    )
+    assert seconds(doc["screen"]) == 10
+    assert all(
+        datetime.fromisoformat(r["end"]) <= at(10, 15) + timedelta(seconds=10)
+        for r in doc["body"]
+    )
+
+
+def test_location_stops_after_45_minutes_without_evidence():
+    points = [GeoPoint(at(10), *HOME), GeoPoint(at(10, 15), *HOME)]
+    doc = merge_day(DAY, TZ, points, [])
+    assert active(doc["body"], at(10, 30))[0]["kind"] == "stay"
+    assert active(doc["body"], at(11, 1))[0]["kind"] == "unknown"
+    assert active(doc["body"], at(23))[0]["kind"] == "unknown"
+
+
+def test_bad_accuracy_does_not_move_body():
+    points = [
+        GeoPoint(at(10), *HOME, 10),
+        GeoPoint(at(10, 15), *HOME, 10),
+        GeoPoint(at(10, 30), 40, 70, 500),
+    ]
+    doc = merge_day(DAY, TZ, points, [])
+    assert doc["poor_location_points"] == 1
+    assert active(doc["body"], at(10, 30))[0]["kind"] == "stay"
+
+
+def test_radius_and_ssid_are_consistent():
+    pins = [PlaceSignature("Home", *HOME, "HomeNet", at(0), radius_m=10)]
+    points = [
+        GeoPoint(at(10), HOME[0] + 0.0003, HOME[1]),
+        GeoPoint(at(10, 15), HOME[0] + 0.0003, HOME[1]),
+    ]
+    doc = merge_day(DAY, TZ, points, [], pins)
+    assert active(doc["body"], at(10, 10))[0]["name"] != "Home"
+    pins = [PlaceSignature("Home", *HOME, "HomeNet", at(0), radius_m=80)]
+    doc = merge_day(DAY, TZ, points, [sample(10, ssid="OtherNet")], pins)
+    assert active(doc["body"], at(10, 10))[0]["name"] != "Home"
+
+
+def test_place_names_keep_effective_history():
+    places = [
+        dict(
+            name="New",
+            latitude=HOME[0],
+            longitude=HOME[1],
+            wifi_ssid=None,
+            radius_m=80,
+            labels_json='[{"name":"Old","at":"2026-09-01T00:00:00Z"},{"name":"New","at":"2026-09-28T00:00:00Z"}]',
         )
-        stay = covers(day["body"], 12, 10)[0]
-        self.assertEqual(stay["name"], "Дом")
-        self.assertNotIn("OtherNet", stay["name"])
-
-    def test_one_app_on_one_computer_is_one_block(self):
-        points = [point(1, 0, *HOME), point(2, 0, *HOME)]
-        origin = datetime(2026, 9, 27, tzinfo=TZ)
-        screens = [
-            ScreenSample(origin + timedelta(minutes=60 + minute), "Macbook", "ChatGPT", f"chat {minute}")
-            for minute in range(30)
-        ]
-        day = merge_day(DAY, TZ, points, screens, [])
-        self.assertEqual(len(day["screen"]), 1)
-        self.assertEqual(day["screen"][0]["app"], "ChatGPT")
-        self.assertEqual(day["screen"][0]["title"], "ChatGPT")
-        self.assertEqual(day["agent"], [])
-        self.assertEqual(day["disputes"], [])
-
-    def test_computer_use_on_the_same_computer_is_one_agent_block(self):
-        points = [point(16, 0, *HOME), point(16, 40, *HOME)]
-        origin = datetime(2026, 9, 27, tzinfo=TZ)
-        screens = []
-        for minute in range(16 * 60, 16 * 60 + 20):
-            screens.append(
-                ScreenSample(origin + timedelta(minutes=minute), "Macbook", "ChatGPT", "Computer Use Controls")
-            )
-            screens.append(
-                ScreenSample(origin + timedelta(minutes=minute, seconds=30), "Macbook", "Cursor", f"file {minute}")
-            )
-        day = merge_day(DAY, TZ, points, screens, [])
-        self.assertEqual(len(day["screen"]), 1)
-        self.assertEqual(day["screen"][0]["app"], "Cursor")
-        self.assertEqual(len(day["agent"]), 1)
-        self.assertEqual(day["agent"][0]["app"], "ChatGPT")
-        self.assertEqual(day["disputes"], [])
-
-    def test_two_computers_make_one_dispute(self):
-        points = [point(16, 0, *HOME), point(16, 40, *HOME)]
-        origin = datetime(2026, 9, 27, tzinfo=TZ)
-        screens = []
-        for minute in range(16 * 60 + 15, 16 * 60 + 25):
-            screens.append(ScreenSample(origin + timedelta(minutes=minute), "PC", "dota2", "Dota 2"))
-            screens.append(
-                ScreenSample(origin + timedelta(minutes=minute, seconds=10), "Macbook", "Cursor", f"file {minute}")
-            )
-        day = merge_day(DAY, TZ, points, screens, [])
-        self.assertEqual(len(day["disputes"]), 1)
-        self.assertEqual(len(day["screen"]), 1)
-        self.assertEqual(len(day["agent"]), 1)
-
-    def test_short_stay_between_roads_becomes_road(self):
-        near = (43.23300, 76.96000)
-        points = [
-            point(10, 0, *HOME),
-            point(10, 20, *HOME),
-            point(10, 30, *near),
-            point(10, 40, *CAFE),
-            point(10, 44, *CAFE),
-            point(11, 0, *HOME),
-        ]
-        day = merge_day(DAY, TZ, points, [], [])
-        self.assertEqual(covers(day["body"], 10, 42)[0]["kind"], "travel")
-
-    def test_computer_use_loses_when_another_screen_is_fresh(self):
-        points = [point(16, 0, *HOME), point(16, 30, *HOME)]
-        screens = [
-            screen(16, 0, "Macbook", "ChatGPT", "Computer Use Controls"),
-            screen(16, 10, "Macbook", "ChatGPT", "Computer Use Controls"),
-            screen(16, 10, "PC", "Cursor", "activity.py"),
-        ]
-        day = merge_day(DAY, TZ, points, screens, [])
-        self.assertEqual(covers(day["screen"], 16, 10)[0]["device"], "PC")
-
-    def test_old_codex_file_is_detected(self):
-        self.assertTrue(is_old_codex({"categories": [], "blocks": []}))
-        self.assertFalse(is_old_codex({"body": [], "agent": []}))
-        self.assertFalse(is_old_codex({"source": "codex", "body": [], "categories": [], "blocks": []}))
-
-    def test_codex_blocks_are_not_replaced(self):
-        with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
-            path = day_path(root, 1, DAY)
-            path.parent.mkdir(parents=True)
-            path.write_text(
-                json.dumps(
-                    {
-                        "categories": [{"id": "work", "name": "Работа", "color": "#1a73e8"}],
-                        "blocks": [
-                            {
-                                "category": "work",
-                                "device": "Macbook",
-                                "start": "16:00",
-                                "end": "18:00",
-                                "items": [{"name": "Cursor", "start": "16:00", "end": "18:00"}],
-                            }
-                        ],
-                        "agent": [
-                            {
-                                "device": "Macbook",
-                                "start": "16:10",
-                                "end": "16:40",
-                                "note": "ChatGPT вёл окно",
-                            }
-                        ],
-                        "aggregated_at": "2026-09-27T12:00:00+00:00",
-                    }
-                ),
-                encoding="utf-8",
-            )
-            points = [point(16, 0, *HOME), point(17, 0, *HOME)]
-            screens = [screen(16, 30, "Macbook", "Safari", "mail")]
-            result = read_day(
-                root,
-                1,
-                DAY,
-                date(2026, 9, 28),
-                TZ,
-                points,
-                screens,
-                [],
-                raw_latest=datetime(2026, 9, 27, 11, tzinfo=timezone.utc),
-            )
-            self.assertEqual(covers(result["screen"], 16, 30)[0]["title"], "Cursor")
-            self.assertEqual(covers(result["screen"], 16, 30)[0]["color"], "#1a73e8")
-            self.assertEqual(covers(result["agent"], 16, 20)[0]["title"], "ChatGPT вёл окно")
-            again = read_day(
-                root,
-                1,
-                DAY,
-                date(2026, 9, 28),
-                TZ,
-                [point(18, 0, *CAFE), point(18, 30, *CAFE)],
-                screens,
-                [],
-                raw_latest=datetime(2026, 9, 28, 1, tzinfo=timezone.utc),
-            )
-            self.assertEqual(covers(again["agent"], 16, 20)[0]["title"], "ChatGPT вёл окно")
-            self.assertEqual(covers(again["screen"], 16, 30)[0]["title"], "Cursor")
-
-    def test_closed_day_is_not_rebuilt(self):
-        with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
-            points = [point(12, 0, *HOME), point(12, 30, *HOME)]
-            first = read_day(
-                root,
-                1,
-                DAY,
-                date(2026, 9, 28),
-                TZ,
-                points,
-                [],
-                [],
-                raw_latest=datetime(2026, 9, 27, 12, tzinfo=timezone.utc),
-            )
-            self.assertEqual(first["body"][1]["kind"], "stay")
-            second = read_day(
-                root,
-                1,
-                DAY,
-                date(2026, 9, 28),
-                TZ,
-                [point(18, 0, *CAFE), point(18, 30, *CAFE)],
-                [],
-                [],
-                raw_latest=datetime(2026, 9, 28, 1, tzinfo=timezone.utc),
-            )
-            kept = covers(second["body"], 18, 10)[0]
-            self.assertEqual(kept["kind"], "stay")
-            self.assertEqual(kept["center"]["lat"], HOME[0])
-
-    def test_closed_day_renames_without_moving(self):
-        with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
-            points = [
-                point(14, 0, *CAFE),
-                point(14, 30, *CAFE),
-                point(16, 0, *HOME),
-                point(16, 30, *HOME),
-            ]
-            read_day(
-                root,
-                1,
-                DAY,
-                date(2026, 9, 28),
-                TZ,
-                points,
-                [],
-                [],
-                raw_latest=datetime(2026, 9, 27, 12, tzinfo=timezone.utc),
-            )
-            signature = PlaceSignature("Cafe Main", *CAFE, None, at(14, 0), at(14, 0))
-            second = read_day(
-                root,
-                1,
-                DAY,
-                date(2026, 9, 28),
-                TZ,
-                [point(18, 0, *HOME), point(18, 30, *HOME)],
-                [],
-                [signature],
-                raw_latest=datetime(2026, 9, 28, 1, tzinfo=timezone.utc),
-            )
-            renamed = covers(second["body"], 14, 10)[0]
-            self.assertEqual(renamed["name"], "Cafe Main")
-            self.assertEqual(renamed["center"]["lat"], CAFE[0])
+    ]
+    doc = merge_day(
+        DAY,
+        TZ,
+        [GeoPoint(at(10), *HOME), GeoPoint(at(10, 15), *HOME)],
+        [],
+        signatures_from_places(places),
+    )
+    assert active(doc["body"], at(10, 10))[0]["name"] == "Old"
 
 
-class PresentDayTest(unittest.TestCase):
-    def test_morning_sits_above_evening(self):
-        document = {
-            "body": [
-                {
-                    "start": "2026-09-27T09:00:00+05:00",
-                    "end": "2026-09-27T10:00:00+05:00",
-                    "kind": "stay",
-                    "name": "зал",
-                },
-                {
-                    "start": "2026-09-27T18:00:00+05:00",
-                    "end": "2026-09-27T19:00:00+05:00",
-                    "kind": "stay",
-                    "name": "дом",
-                },
-            ],
-            "screen": [
-                {
-                    "start": "2026-09-27T09:00:00+05:00",
-                    "end": "2026-09-27T09:30:00+05:00",
-                    "app": "Cursor",
-                    "title": "day",
-                    "device": "Macbook",
-                }
-            ],
-            "agent": [],
-            "disputes": [],
-        }
-        view = present_day(document, document["body"][0]["start"])
-        self.assertLess(view["body_blocks"][0]["top"], view["body_blocks"][1]["top"])
-        self.assertAlmostEqual(view["body_blocks"][0]["top"], 9 * 60 / 1440 * 100)
-        self.assertTrue(view["body_blocks"][0]["selected"])
-        self.assertEqual(view["screen_sum"], "30 мин")
-        self.assertEqual(view["selected_name"], "зал")
-        self.assertEqual(view["columns"][0]["title"], "тело")
-        self.assertEqual(view["hours"][0]["label"], "00:00")
-        self.assertEqual(view["hours"][1]["label"], "00:15")
-        self.assertTrue(view["hours"][4]["major"])
-        self.assertFalse(view["hours"][1]["major"])
-        self.assertEqual(view["hours"][-1]["label"], "24:00")
-
-    def test_template_draws_vertical_day(self):
-        from types import SimpleNamespace
-
-        try:
-            from jinja2 import Environment, FileSystemLoader, select_autoescape
-        except ModuleNotFoundError:
-            self.skipTest("jinja2 is not installed in this interpreter")
-
-        env = Environment(
-            loader=FileSystemLoader("app/templates"),
-            autoescape=select_autoescape(["html"]),
-        )
-        document = {
-            "error": "raw",
-            "body": [],
-            "screen": [],
-            "agent": [],
-            "disputes": [],
-        }
-        failed = present_day(document, None)
-        failed.update(
-            day="2026-09-27",
-            day_label="воскресенье 27 сентября",
-            is_today=False,
-            prev_date="2026-09-26",
-            next_date="2026-09-28",
-            has_devices=True,
-            has_places=True,
-            user=SimpleNamespace(name="Я", email="a@b.c"),
-            page="day",
-            error=None,
-            success=None,
-        )
-        html = env.get_template("activity/index.html").render(**failed)
-        self.assertIn("День не собрался. Сырые события не прочитались.", html)
-        self.assertNotIn("Запомнить", html)
-        self.assertIn("тело", html)
-
-        ok = present_day(
-            {
-                "body": [
-                    {
-                        "start": "2026-09-27T09:00:00+05:00",
-                        "end": "2026-09-27T10:00:00+05:00",
-                        "kind": "stay",
-                        "name": "зал",
-                    }
-                ],
-                "screen": [],
-                "agent": [],
-                "disputes": [
-                    {
-                        "start": "2026-09-27T16:18:00+05:00",
-                        "end": "2026-09-27T16:19:00+05:00",
-                        "screens": [
-                            {"device": "Macbook", "app": "Cursor", "title": "a"},
-                            {"device": "PC", "app": "Dota 2", "title": "b"},
-                        ],
-                        "winner": "PC",
-                    }
-                ],
-            },
-            "2026-09-27T09:00:00+05:00",
-        )
-        ok.update(
-            day="2026-09-27",
-            day_label="воскресенье 27 сентября",
-            is_today=False,
-            prev_date="2026-09-26",
-            next_date="2026-09-28",
-            has_devices=True,
-            has_places=True,
-            user=SimpleNamespace(name="Я", email="a@b.c"),
-            page="day",
-            error=None,
-            success=None,
-        )
-        drawn = env.get_template("activity/index.html").render(**ok)
-        self.assertIn("Запомнить", drawn)
-        self.assertIn("ты за экраном", drawn)
-        self.assertIn("Имя места", drawn)
-        self.assertIn("data-start=\"2026-09-27T09:00:00+05:00\"", drawn)
-        self.assertIn("Экран отдан PC", drawn)
+def test_timezone_day_bounds_use_actual_dst_duration():
+    zone = ZoneInfo("Europe/Berlin")
+    assert (
+        bounds(date(2026, 3, 29), zone)[1] - bounds(date(2026, 3, 29), zone)[0]
+    ).total_seconds() == 23 * 3600
+    assert (
+        bounds(date(2026, 10, 25), zone)[1] - bounds(date(2026, 10, 25), zone)[0]
+    ).total_seconds() == 25 * 3600
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_pre_midnight_interval_carries_over():
+    before = at(0) - timedelta(seconds=30)
+    doc = merge_day(
+        DAY, TZ, [], [ScreenSample(before, "Mac", "Editor", "Doc", device_id=1)]
+    )
+    assert (
+        seconds(doc["screen"]) == 30 and doc["screen"][0]["start"] == at(0).isoformat()
+    )
+
+
+def test_half_up_kilometers():
+    assert km_from_home(1250) == "1.3 км от дома"
+    assert km_from_home(1249) == "1.2 км от дома"
+
+
+def test_short_stay_between_roads_becomes_road():
+    other = (43.24, 76.97)
+    third = (43.25, 76.98)
+    points = [
+        GeoPoint(at(10), *HOME),
+        GeoPoint(at(10, 15), *HOME),
+        GeoPoint(at(10, 25), *other),
+        GeoPoint(at(10, 27), *other),
+        GeoPoint(at(10, 35), *third),
+        GeoPoint(at(10, 50), *third),
+    ]
+    doc = merge_day(DAY, TZ, points, [])
+    assert active(doc["body"], at(10, 26))[0]["kind"] == "travel"
+    assert active(doc["body"], at(10, 40))[0]["kind"] == "stay"
+
+
+def test_long_location_gap_is_unknown_even_at_same_place():
+    points = [
+        GeoPoint(at(10), *HOME),
+        GeoPoint(at(10, 15), *HOME),
+        GeoPoint(at(12), *HOME),
+        GeoPoint(at(12, 15), *HOME),
+    ]
+    assert (
+        active(merge_day(DAY, TZ, points, [])["body"], at(11))[0]["kind"] == "unknown"
+    )
+
+
+def test_location_stay_carries_across_midnight():
+    points = [
+        GeoPoint(at(0) - timedelta(minutes=20), *HOME),
+        GeoPoint(at(0) - timedelta(minutes=5), *HOME),
+    ]
+    doc = merge_day(DAY, TZ, points, [])
+    assert active(doc["body"], at(0, 20))[0]["kind"] == "stay"
+    assert active(doc["body"], at(0, 41))[0]["kind"] == "unknown"
+    assert all(datetime.fromisoformat(r["start"]) >= at(0) for r in doc["body"])
+
+
+def test_fall_back_retains_both_observations_at_repeated_clock_time():
+    day = date(2026, 10, 25)
+    zone = ZoneInfo("Europe/Berlin")
+    first = datetime(2026, 10, 25, 2, 30, tzinfo=zone, fold=0)
+    second = datetime(2026, 10, 25, 2, 30, tzinfo=zone, fold=1)
+    doc = merge_day(
+        day,
+        zone,
+        [],
+        [
+            ScreenSample(first, "Mac", "Editor", "A", device_id=1),
+            ScreenSample(second, "Mac", "Editor", "B", device_id=1),
+        ],
+    )
+    doc.update(day=day.isoformat(), timezone=str(zone))
+    view = present_day(doc)
+    assert view["screen_sum"] == "2 мин"
+    assert view["screen_blocks"][1]["top"] > view["screen_blocks"][0]["top"]
+
+
+def test_renaming_mid_stay_does_not_relabel_prior_hours():
+    pins = [
+        PlaceSignature("Old", *HOME, None, at(0)),
+        PlaceSignature("New", *HOME, None, at(10, 20)),
+    ]
+    doc = merge_day(
+        DAY,
+        TZ,
+        [
+            GeoPoint(at(10), *HOME),
+            GeoPoint(at(10, 15), *HOME),
+            GeoPoint(at(10, 30), *HOME),
+        ],
+        [],
+        pins,
+    )
+    assert active(doc["body"], at(10, 10))[0]["name"] == "Old"
+    assert active(doc["body"], at(10, 25))[0]["name"] == "New"

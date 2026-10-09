@@ -1,7 +1,9 @@
 """Activity diary. Each user sees only their own places, devices, and window titles."""
+
 import logging
 from datetime import date, datetime
 from pathlib import Path
+import json
 
 from urllib.parse import urlencode
 
@@ -10,7 +12,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from app.auth import get_current_user, has_service_access
-from app.database import User
+from app.database import User, ActivityDay, async_session
 from app.services.activity import (
     authenticate_device,
     create_device,
@@ -23,6 +25,7 @@ from app.services.activity import (
     list_places,
     record_location,
     record_screen,
+    record_screens,
     regenerate_device_token,
     remember_stay,
     rename_device,
@@ -43,8 +46,16 @@ CLIENT_FILES = {
 
 
 def public_base(request: Request) -> str:
-    proto = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
-    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    proto = (
+        request.headers.get("x-forwarded-proto", request.url.scheme)
+        .split(",")[0]
+        .strip()
+    )
+    host = (
+        request.headers.get("x-forwarded-host")
+        or request.headers.get("host")
+        or request.url.netloc
+    )
     host = str(host).split(",")[0].strip()
     return f"{proto}://{host}"
 
@@ -99,7 +110,7 @@ def form_text(form, name: str) -> str:
 async def screen_payload(request: Request):
     ctype = request.headers.get("content-type", "")
     if "application/json" in ctype:
-        data = await request.json()
+        data = await bounded_json(request)
         if not isinstance(data, dict):
             raise HTTPException(status_code=400, detail="expected object")
         return data
@@ -109,6 +120,10 @@ async def screen_payload(request: Request):
         "window_title": form_text(form, "window_title"),
         "wifi_ssid": form_text(form, "wifi_ssid"),
         "captured_at": form_text(form, "captured_at"),
+        "client_event_id": form_text(form, "client_event_id"),
+        "idle_seconds": form_text(form, "idle_seconds") or None,
+        "sample_minutes": form_text(form, "sample_minutes") or None,
+        "actor": form_text(form, "actor") or None,
     }
 
 
@@ -164,14 +179,14 @@ async def download_client(token: str):
 
 
 @router.get("/api/config/{token}")
-async def activity_config(token: str):
+async def activity_config(token: str, request: Request):
     device = await require_device(token)
-    return await device_config(device)
+    return await device_config(device, request.headers.get("X-Activity-Client-Version"))
 
 
 @router.post("/api/ingest/{token}")
 async def activity_ingest(token: str, request: Request):
-    device = await require_device(token)
+    device = await require_desktop_device(token)
     payload = await screen_payload(request)
     result = await record_screen(
         device,
@@ -179,10 +194,81 @@ async def activity_ingest(token: str, request: Request):
         window_title=payload.get("window_title"),
         wifi_ssid=payload.get("wifi_ssid"),
         captured_at=payload.get("captured_at"),
+        client_event_id=payload.get("client_event_id"),
+        idle_seconds=payload.get("idle_seconds"),
+        sample_minutes=payload.get("sample_minutes"),
+        actor=payload.get("actor"),
     )
     if result.status == "error":
         raise HTTPException(status_code=400, detail=result.reason or "rejected")
     return result.as_dict()
+
+
+@router.post("/api/batch/{token}")
+async def activity_batch(token: str, request: Request):
+    device = await require_desktop_device(token)
+    data = await bounded_json(request)
+    samples = data.get("events") if isinstance(data, dict) else None
+    if (
+        not isinstance(samples, list)
+        or not 1 <= len(samples) <= 200
+        or any(not isinstance(s, dict) or not s.get("client_event_id") for s in samples)
+    ):
+        raise HTTPException(status_code=400, detail="Expected 1–200 identified events")
+    results = await record_screens(device, samples)
+    return {
+        "results": [
+            dict(client_event_id=s["client_event_id"], **r.as_dict())
+            for s, r in zip(samples, results)
+        ]
+    }
+
+
+def bearer_token(request):
+    authorization = request.headers.get("authorization", "")
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Device token required")
+    return authorization[7:]
+
+
+async def bounded_json(request):
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > 512 * 1024:
+            raise HTTPException(status_code=413, detail="Activity payload too large")
+    try:
+        return json.loads(body)
+    except (ValueError, UnicodeError):
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+
+@router.get("/api/config")
+async def activity_config_bearer(request: Request):
+    return await activity_config(bearer_token(request), request)
+
+
+@router.post("/api/batch")
+async def activity_batch_bearer(request: Request):
+    return await activity_batch(bearer_token(request), request)
+
+
+@router.get("/client.py")
+async def public_activity_client():
+    return FileResponse(
+        client_bundle("client.py"),
+        media_type=CLIENT_FILES["client.py"],
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+@router.get("/requirements.txt")
+async def public_activity_requirements():
+    return FileResponse(
+        client_bundle("requirements.txt"),
+        media_type=CLIENT_FILES["requirements.txt"],
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 @router.post("/api/location/{token}")
@@ -190,7 +276,7 @@ async def activity_location(token: str, request: Request):
     device = await require_device(token)
     ctype = request.headers.get("content-type", "")
     if "application/json" in ctype:
-        raw = await request.json()
+        raw = await bounded_json(request)
         if not isinstance(raw, dict):
             raise HTTPException(status_code=400, detail="expected object")
         data = lowered(raw)
@@ -204,7 +290,9 @@ async def activity_location(token: str, request: Request):
     except ValueError:
         raise HTTPException(status_code=400, detail="bad coordinates")
     if lat is None or lon is None:
-        raise HTTPException(status_code=400, detail="latitude and longitude are required")
+        raise HTTPException(
+            status_code=400, detail="latitude and longitude are required"
+        )
     captured = data.get("captured_at") or data.get("timestamp")
     result = await record_location(
         device,
@@ -220,7 +308,9 @@ async def activity_location(token: str, request: Request):
 
 @router.get("")
 @router.get("/")
-async def activity_index(request: Request, date: str | None = None, stay: str | None = None):
+async def activity_index(
+    request: Request, date: str | None = None, stay: str | None = None
+):
     user = await gate(request)
     if not isinstance(user, User):
         return user
@@ -232,6 +322,25 @@ async def activity_index(request: Request, date: str | None = None, stay: str | 
         name="activity/index.html",
         context=page_context(request, user, "day", **view),
     )
+
+
+@router.get("/status")
+async def activity_status(request: Request, date: str | None = None):
+    user = await gate(request)
+    if not isinstance(user, User):
+        return user
+    prefs = await settings_view(user.id)
+    day = parse_day(date, prefs["timezone"])
+    async with async_session() as session:
+        job = await session.get(ActivityDay, (user.id, day.isoformat()))
+        return {
+            "revision": job.revision if job else 0,
+            "processed_revision": job.processed_revision if job else 0,
+            "snapshot": job.processed_at.isoformat()
+            if job and job.processed_at
+            else None,
+            "error": job.error if job else None,
+        }
 
 
 @router.post("/remember")
@@ -258,7 +367,12 @@ async def activity_remember(
 
 
 @router.get("/places")
-async def activity_places(request: Request, edit: int | None = None, lat: str | None = None, lon: str | None = None):
+async def activity_places(
+    request: Request,
+    edit: int | None = None,
+    lat: str | None = None,
+    lon: str | None = None,
+):
     user = await gate(request)
     if not isinstance(user, User):
         return user
@@ -337,7 +451,9 @@ async def activity_save_place(
                 error=error,
             ),
         )
-    return RedirectResponse(url="/activity/places?success=Место+сохранено", status_code=302)
+    return RedirectResponse(
+        url="/activity/places?success=Место+сохранено", status_code=302
+    )
 
 
 @router.post("/places/{place_id}/delete")
@@ -346,7 +462,9 @@ async def activity_delete_place(request: Request, place_id: int):
     if not isinstance(user, User):
         return user
     await delete_place(user.id, place_id)
-    return RedirectResponse(url="/activity/places?success=Место+удалено", status_code=302)
+    return RedirectResponse(
+        url="/activity/places?success=Место+удалено", status_code=302
+    )
 
 
 @router.get("/devices")
@@ -379,18 +497,26 @@ async def activity_create_device(
         return templates.TemplateResponse(
             request=request,
             name="activity/devices.html",
-            context=page_context(request, user, "devices", devices=devices, error=error),
+            context=page_context(
+                request, user, "devices", devices=devices, error=error
+            ),
         )
-    return RedirectResponse(url="/activity/devices?success=Устройство+добавлено", status_code=302)
+    return RedirectResponse(
+        url="/activity/devices?success=Устройство+добавлено", status_code=302
+    )
 
 
 @router.post("/devices/{device_id}/rename")
-async def activity_rename_device(request: Request, device_id: int, name: str = Form("")):
+async def activity_rename_device(
+    request: Request, device_id: int, name: str = Form("")
+):
     user = await gate(request)
     if not isinstance(user, User):
         return user
     await rename_device(user.id, device_id, name)
-    return RedirectResponse(url="/activity/devices?success=Название+обновлено", status_code=302)
+    return RedirectResponse(
+        url="/activity/devices?success=Название+обновлено", status_code=302
+    )
 
 
 @router.post("/devices/{device_id}/token")
@@ -399,7 +525,9 @@ async def activity_new_token(request: Request, device_id: int):
     if not isinstance(user, User):
         return user
     await regenerate_device_token(user.id, device_id)
-    return RedirectResponse(url="/activity/devices?success=Токен+обновлён", status_code=302)
+    return RedirectResponse(
+        url="/activity/devices?success=Токен+обновлён", status_code=302
+    )
 
 
 @router.post("/devices/{device_id}/delete")
@@ -408,7 +536,9 @@ async def activity_delete_device(request: Request, device_id: int):
     if not isinstance(user, User):
         return user
     await delete_device(user.id, device_id)
-    return RedirectResponse(url="/activity/devices?success=Устройство+удалено", status_code=302)
+    return RedirectResponse(
+        url="/activity/devices?success=Устройство+удалено", status_code=302
+    )
 
 
 @router.get("/settings")
@@ -431,6 +561,7 @@ async def activity_save_settings(
     sample_minutes: str = Form("5"),
     idle_minutes: str = Form("3"),
     skip_apps: str = Form(""),
+    retention_days: str = Form("0"),
 ):
     user = await gate(request)
     if not isinstance(user, User):
@@ -441,6 +572,7 @@ async def activity_save_settings(
         sample_minutes,
         idle_minutes,
         skip_apps,
+        retention_days,
     )
     if error:
         prefs = await settings_view(user.id)
@@ -449,4 +581,6 @@ async def activity_save_settings(
             name="activity/settings.html",
             context=page_context(request, user, "settings", prefs=prefs, error=error),
         )
-    return RedirectResponse(url="/activity/settings?success=Настройки+сохранены", status_code=302)
+    return RedirectResponse(
+        url="/activity/settings?success=Настройки+сохранены", status_code=302
+    )

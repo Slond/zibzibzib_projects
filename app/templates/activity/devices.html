@@ -37,7 +37,7 @@
         </div>
 
         {% if device.platform == 'iphone' %}
-        <p class="hint">iOS не сообщает командам и приложениям, какая программа сейчас на экране. С телефона уходит только геолокация.</p>
+        <p class="hint">iOS не сообщает командам и приложениям, какая программа сейчас на экране. С телефона уходит только геолокация. Через 45 минут без новой точки местоположение считается неизвестным. В Shortcuts нет готового расписания «каждые 15 минут»; для непрерывной дорожки нужны отдельные частые запуски.</p>
         <div class="token" id="url-{{ device.id }}">{{ base_url }}/activity/api/location/{{ device.token }}</div>
         <div class="row-actions" style="margin:12px 0;">
             <button type="button" class="btn small" onclick="navigator.clipboard.writeText(document.getElementById('url-{{ device.id }}').innerText)">Копировать URL</button>
@@ -47,17 +47,22 @@
             <li>Добавьте действие «Текущее местоположение».</li>
             <li>Добавьте «Получить содержимое URL»: метод POST, адрес выше.</li>
             <li>Заголовок <span class="token" style="display:inline;">Content-Type: application/json</span></li>
-            <li>Тело запроса — JSON. В поля latitude и longitude вставьте широту и долготу из предыдущего действия.</li>
-            <li>Автоматизация → Время суток → каждый час → запуск этой команды.</li>
+            <li>Тело запроса — JSON. В поля latitude и longitude вставьте широту и долготу; в accuracy — точность в метрах, в captured_at — текущую дату в ISO 8601. Если точность недоступна, поле accuracy можно убрать.</li>
+            <li>Автоматизация → Время суток → выберите время → ежедневно → запускать немедленно. Для нескольких запусков добавьте отдельные автоматизации (например, 08:00, 08:15, 08:30). Можно добавить запуск при прибытии и уходе.</li>
         </ol>
-        <pre class="token">{"latitude": 0, "longitude": 0}</pre>
+        <pre class="token">{"latitude": 0, "longitude": 0, "accuracy": 10, "captured_at": "2026-10-09T12:00:00+05:00"}</pre>
         {% else %}
+        <p class="hint">{% if device.update_required %}Обновите клиент командой ниже: она включает сохранение событий без сети.{% else %}Клиент v{{ device.client_version }}: очередь без сети включена.{% endif %}</p>
         <p class="hint">Одна команда скачивает клиент в свою папку и включает его при входе в систему. До входа окон ещё нет, поэтому старт привязан к рабочему столу, а не к включению питания. После смены токена вставьте команду ещё раз. Если адрес начинается с localhost, подставьте внешний домен.</p>
         {% if device.platform == 'windows' %}
         <pre class="token" id="cmd-{{ device.id }}">set DIR=%APPDATA%\activity-client
 mkdir "%DIR%" 2>nul
-curl.exe -fsSL "{{ base_url }}/activity/api/client/{{ device.token }}" -o "%DIR%\client.py"
-curl.exe -fsSL "{{ base_url }}/activity/api/client/{{ device.token }}/requirements.txt" -o "%DIR%\requirements.txt"
+schtasks /End /TN ActivityClient 2>nul
+powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^python(w)?\.exe$' -and $_.CommandLine -like ('*' + $env:APPDATA + '\activity-client\client.py*') } | ForEach-Object { Stop-Process -Id $_.ProcessId -ErrorAction SilentlyContinue }"
+curl.exe -fsSL "{{ base_url }}/activity/client.py" -o "%DIR%\client.py.new"
+if errorlevel 1 exit /b 1
+move /Y "%DIR%\client.py.new" "%DIR%\client.py" >nul
+curl.exe -fsSL "{{ base_url }}/activity/requirements.txt" -o "%DIR%\requirements.txt"
 set "PY="
 py -3 -c "import sys" >nul 2>&1
 if not errorlevel 1 set "PY=py -3"
@@ -68,8 +73,10 @@ if defined PY %PY% -m venv "%DIR%\venv"
 if exist "%DIR%\venv\Scripts\python.exe" "%DIR%\venv\Scripts\python.exe" -m pip install -r "%DIR%\requirements.txt"
 if exist "%DIR%\venv\Scripts\python.exe" (
 > "%DIR%\start.cmd" echo @echo off
->> "%DIR%\start.cmd" echo "%DIR%\venv\Scripts\python.exe" "%DIR%\client.py" --server {{ base_url }} --token {{ device.token }}
-schtasks /Create /F /SC ONLOGON /TN ActivityClient /TR "\"%DIR%\start.cmd\""
+"%DIR%\venv\Scripts\python.exe" "%DIR%\client.py" --server {{ base_url }} --token {{ device.token }} --configure-only
+>> "%DIR%\start.cmd" echo "%DIR%\venv\Scripts\python.exe" "%DIR%\client.py"
+schtasks /Delete /F /TN ActivityClient 2>nul
+powershell -NoProfile -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut([IO.Path]::Combine([Environment]::GetFolderPath('Startup'),'ActivityClient.lnk')); $s.TargetPath=$env:APPDATA+'\activity-client\start.cmd'; $s.WindowStyle=7; $s.Save()"
 call "%DIR%\start.cmd"
 )</pre>
         <p class="hint">Вставьте это в cmd целиком. Если Python ещё не стоит, команда остановится и напишет, откуда его скачать. Клиент стартует при следующем входе и сразу после этих команд.</p>
@@ -78,18 +85,23 @@ call "%DIR%\start.cmd"
 DIR="$HOME/Library/Application Support/activity-client"
 PLIST="$HOME/Library/LaunchAgents/activity-client.plist"
 mkdir -p "$DIR" "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
-curl -fsSL "{{ base_url }}/activity/api/client/{{ device.token }}" -o "$DIR/client.py"
-curl -fsSL "{{ base_url }}/activity/api/client/{{ device.token }}/requirements.txt" -o "$DIR/requirements.txt"
+umask 077
+DOMAIN="gui/$(id -u)"
+launchctl bootout "$DOMAIN/activity-client" 2>/dev/null || true
+curl -fsSL "{{ base_url }}/activity/client.py" -o "$DIR/client.py.new"
+mv "$DIR/client.py.new" "$DIR/client.py"
+curl -fsSL "{{ base_url }}/activity/requirements.txt" -o "$DIR/requirements.txt"
 python3 -m venv "$DIR/venv"
 "$DIR/venv/bin/python" -m pip install -r "$DIR/requirements.txt"
 PY="$DIR/venv/bin/python"
-python3 - "$PLIST" "$PY" "$DIR/client.py" "$DIR" "{{ base_url }}" "{{ device.token }}" << 'PY'
+"$PY" "$DIR/client.py" --server {{ base_url }} --token {{ device.token }} --configure-only
+python3 - "$PLIST" "$PY" "$DIR/client.py" "$DIR" << 'PY'
 import pathlib, plistlib, sys
-plist, py, script, directory, server, token = sys.argv[1:]
+plist, py, script, directory = sys.argv[1:]
 log = str(pathlib.Path.home() / "Library/Logs/activity-client.log")
 data = {
     "Label": "activity-client",
-    "ProgramArguments": [py, script, "--server", server, "--token", token],
+    "ProgramArguments": [py, script],
     "WorkingDirectory": directory,
     "RunAtLoad": True,
     "KeepAlive": True,

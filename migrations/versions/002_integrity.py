@@ -43,8 +43,12 @@ def upgrade():
     # Only create an index after every column it refers to has been added.
     from app.database import Base
     for table in Base.metadata.tables.values():
+        if not sa.inspect(connection).has_table(table.name):
+            continue
+        columns = {c['name'] for c in sa.inspect(connection).get_columns(table.name)}
         for index in table.indexes:
-            index.create(connection, checkfirst=True)
+            if {c.name for c in index.columns} <= columns:
+                index.create(connection, checkfirst=True)
 
 
 def downgrade():

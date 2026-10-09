@@ -181,6 +181,11 @@
 
 <div class="content" style="padding-bottom:180px;">
 <div class="index-container">
+    <div id="rate-warning" class="error" role="status" hidden></div>
+    <div id="load-error" class="error" role="alert" hidden>
+        Не удалось загрузить финансы.
+        <button type="button" class="btn small" onclick="loadData(currentEventId)">Повторить</button>
+    </div>
     {% if budget_alert %}
     <div class="budget-alert">
         <div class="budget-alert-header">⚠️ Бюджет «{{ budget_alert.category }}»</div>
@@ -258,6 +263,7 @@
 let currentEventId = null;
 
 async function loadData(eventId = null) {
+    document.getElementById('load-error').hidden = true;
     try {
         let statsUrl = '/finance/api/stats?days=30';
         let transUrl = '/finance/api/transactions?limit=10';
@@ -271,11 +277,16 @@ async function loadData(eventId = null) {
             fetch(statsUrl),
             fetch(transUrl)
         ]);
+        if (!statsRes.ok || !transRes.ok) {
+            throw new Error('API error');
+        }
         
         const stats = await statsRes.json();
         const warning = document.getElementById('rate-warning');
-        warning.hidden = !stats.unconverted_count;
-        warning.textContent = `Не включены в итог $: ${stats.unconverted_count || 0} операций без подтверждённого курса.`;
+        if (warning) {
+            warning.hidden = !stats.unconverted_count;
+            warning.textContent = `Не включены в итог $: ${stats.unconverted_count || 0} операций без подтверждённого курса.`;
+        }
         const transactions = await transRes.json();
         
         document.getElementById('total-month').textContent = '$' + formatAmount(stats.total);
@@ -304,6 +315,13 @@ async function loadData(eventId = null) {
         }
     } catch (e) {
         console.error('Failed to load data:', e);
+        document.getElementById('load-error').hidden = false;
+        ['total-month', 'expenses-month', 'income-month'].forEach(id => {
+            document.getElementById(id).textContent = '—';
+        });
+        document.getElementById('transactions-container').innerHTML = '<div class="empty-state">Не удалось загрузить операции</div>';
+        const warning = document.getElementById('rate-warning');
+        if (warning) warning.hidden = true;
     }
 }
 

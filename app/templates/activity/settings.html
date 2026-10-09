@@ -26,8 +26,13 @@
                 <input type="number" name="sample_minutes" min="1" max="60" value="{{ prefs.sample_minutes }}">
             </div>
             <div class="form-group">
-                <label>Не записывать, если простой дольше, минуты</label>
+                <label>Считать простоями отсутствие ввода дольше, минуты</label>
                 <input type="number" name="idle_minutes" min="1" max="60" value="{{ prefs.idle_minutes }}">
+            </div>
+            <p class="hint">Окна во время простоя сохраняются в отдельной дорожке: чтение и просмотр видео не всегда требуют ввода.</p>
+            <div class="form-group">
+                <label>Хранить историю, дней (0 — без ограничения)</label>
+                <input type="number" name="retention_days" min="0" max="3650" value="{{ prefs.retention_days }}">
             </div>
             <p class="hint">Для приложений из списка сохраняется только имя программы, без заголовка окна или вкладки.</p>
             <div class="form-group">

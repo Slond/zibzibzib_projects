@@ -1,16 +1,19 @@
 """Per-user activity diary: window titles, phone locations, nearby computers."""
+
 import json
 import os
 import logging
 import math
 import re
 import shutil
+import asyncio
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.dialects.sqlite import insert
 
 from app.config import ACTIVITY_DIR
 from app.database import (
@@ -18,13 +21,14 @@ from app.database import (
     ActivityEvent,
     ActivityPlace,
     ActivitySettings,
+    ActivityDay,
     async_session,
     generate_webhook_token,
 )
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_RADIUS_M = 10
+DEFAULT_RADIUS_M = 80
 
 DEFAULT_SKIP_APPS = "\n".join(
     [
@@ -44,7 +48,6 @@ DEFAULT_SKIP_APPS = "\n".join(
     ]
 )
 DEFAULT_TIMEZONE = "Asia/Almaty"
-DEFAULT_MODEL = "gpt-4o-mini"
 PLATFORM_LABELS = {"mac": "Mac", "windows": "Windows", "iphone": "iPhone"}
 MONTHS = [
     "января",
@@ -145,11 +148,11 @@ def parse_client_time(value: str | None) -> datetime:
     raw = str(value).strip().replace("Z", "+00:00")
     try:
         parsed = datetime.fromisoformat(raw)
-    except ValueError:
-        return now
+    except (TypeError, ValueError):
+        raise ValueError("bad captured_at")
     parsed = naive_utc(parsed)
-    if abs((parsed - now).total_seconds()) > 86400:
-        return now
+    if parsed > now + timedelta(minutes=5) or parsed < now - timedelta(days=90):
+        raise ValueError("captured_at outside the accepted 90-day window")
     return parsed
 
 
@@ -193,15 +196,20 @@ def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dlambda = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
-    return 2 * radius * math.asin(math.sqrt(a))
+    a = (
+        math.sin(dphi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    )
+    return 2 * radius * math.asin(math.sqrt(min(1.0, a)))
 
 
-def match_place(places: list, wifi_ssid: str | None, lat: float | None, lon: float | None):
+def match_place(
+    places: list, wifi_ssid: str | None, lat: float | None, lon: float | None
+):
     if wifi_ssid:
-        wanted = wifi_ssid.strip().casefold()
+        wanted = wifi_ssid.strip()
         for place in places:
-            if place.wifi_ssid and place.wifi_ssid.strip().casefold() == wanted:
+            if place.wifi_ssid and place.wifi_ssid.strip() == wanted:
                 return place
     if lat is None or lon is None:
         return None
@@ -234,7 +242,9 @@ def clean_window_title(title: str | None) -> str | None:
     return cleaned or None
 
 
-def screen_summary(app_name: str | None, window_title: str | None, sensitive: bool) -> str:
+def screen_summary(
+    app_name: str | None, window_title: str | None, sensitive: bool
+) -> str:
     if sensitive:
         return app_name or "Личное приложение"
     if browser_name(app_name) and window_title:
@@ -283,264 +293,9 @@ _CLOCK = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
 
 
 def breakdown_dir() -> Path:
-    return Path(os.getenv("ACTIVITY_BREAKDOWN_DIR", activity_root().parent / "activity-days"))
-
-
-def _clock_minutes(value: str) -> int | None:
-    if not isinstance(value, str) or not _CLOCK.match(value):
-        return None
-    hour, minute = value.split(":")
-    return int(hour) * 60 + int(minute)
-
-
-def _share_labels(minutes: list[int], total: int) -> list[str]:
-    raw = [(item / total) * 100 if total else 0 for item in minutes]
-    rounded = [round(item) for item in raw]
-    drift = 100 - sum(rounded)
-    if minutes and drift:
-        index = max(range(len(raw)), key=lambda i: raw[i])
-        rounded[index] += drift
-    labels = []
-    for value, spent in zip(rounded, minutes):
-        if value == 0 and spent > 0:
-            labels.append("<1%")
-        else:
-            labels.append(f"{value}%")
-    return labels
-
-
-def _span_ends(blocks: list, agent: list) -> tuple[int, int] | None:
-    points: list[int] = []
-    for block in blocks:
-        for key in ("start", "end"):
-            value = _clock_minutes(str(block.get(key) or ""))
-            if value is not None:
-                points.append(value)
-        for extra in list(block.get("items") or []) + list(block.get("blips") or []):
-            if not isinstance(extra, dict):
-                continue
-            for key in ("start", "end"):
-                value = _clock_minutes(str(extra.get(key) or ""))
-                if value is not None:
-                    points.append(value)
-    for span in agent:
-        for key in ("start", "end"):
-            value = _clock_minutes(str(span.get(key) or ""))
-            if value is not None:
-                points.append(value)
-    if len(points) < 2:
-        return None
-    origin = min(points) // 60 * 60
-    end = max(points)
-    if end % 60:
-        end = (end // 60 + 1) * 60
-    if end <= origin:
-        end = origin + 60
-    return origin, min(end, 24 * 60)
-
-
-def _tick_labels(origin: int, end: int) -> list[dict]:
-    span = max(end - origin, 1)
-    step = 60 if span <= 8 * 60 else 120 if span <= 16 * 60 else 180
-    ticks = []
-    cursor = origin
-    while cursor < end:
-        ticks.append(cursor)
-        cursor += step
-    if not ticks or end - ticks[-1] >= step * 0.45:
-        ticks.append(end)
-    else:
-        ticks[-1] = end
-    labels = []
-    for tick in ticks:
-        if tick >= 24 * 60:
-            label = "24:00"
-        else:
-            label = f"{tick // 60:02d}:{tick % 60:02d}"
-        labels.append({"label": label, "left": (tick - origin) / span * 100})
-    return labels
-
-
-def _box(origin: int, span: int, start: int, end: int) -> tuple[float, float]:
-    left = (start - origin) / span * 100
-    width = (end - start) / span * 100
-    if left < 0:
-        width += left
-        left = 0
-    width = max(min(width, 100 - left), 0.4)
-    return left, width
-
-
-def load_breakdown(user_id: int, day: date) -> dict | None:
-    """Read the Codex day file for this user. Missing or broken files stay empty."""
-    root = breakdown_dir().resolve()
-    path = (root / str(int(user_id)) / f"{day.isoformat()}.json").resolve()
-    if root not in path.parents or not path.is_file():
-        return None
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    categories = {
-        item.get("id"): item
-        for item in payload.get("categories") or []
-        if isinstance(item, dict) and item.get("id") and item.get("name")
-    }
-    blocks = [block for block in payload.get("blocks") or [] if isinstance(block, dict)]
-    agent = [span for span in payload.get("agent") or [] if isinstance(span, dict)]
-    bounds = _span_ends(blocks, agent)
-    if not bounds:
-        return None
-    origin, end = bounds
-    span = max(end - origin, 1)
-    grouped: dict[str, dict] = {}
-    you: list[dict] = []
-    dots: list[dict] = []
-    for block in blocks:
-        category = categories.get(block.get("category"))
-        if not category:
-            continue
-        color = category["color"] if _HEX_COLOR.match(str(category.get("color") or "")) else "#4361ee"
-        device = str(block.get("device") or "").strip()
-        bucket = grouped.setdefault(
-            block["category"],
-            {
-                "name": str(category["name"]),
-                "color": color,
-                "minutes": 0,
-                "devices": set(),
-                "segments": [],
-                "dots": [],
-                "intervals": [],
-                "outside": False,
-            },
-        )
-        if device:
-            bucket["devices"].add(device)
-        for item in block.get("items") or []:
-            if not isinstance(item, dict):
-                continue
-            start = _clock_minutes(str(item.get("start") or ""))
-            stop = _clock_minutes(str(item.get("end") or ""))
-            if start is None or stop is None or stop <= start:
-                continue
-            left, width = _box(origin, span, start, stop)
-            name = str(item.get("name") or "Занятие")
-            bucket["minutes"] += stop - start
-            bucket["segments"].append({"name": name, "left": left, "width": width, "color": color, "striped": False})
-            bucket["intervals"].append(
-                {
-                    "name": f"{name} · {device}" if device else name,
-                    "start": item["start"],
-                    "end": item["end"],
-                    "time_label": fmt_duration((stop - start) * 60),
-                    "muted": False,
-                }
-            )
-            you.append({"name": name, "left": left, "width": width, "color": color, "striped": False})
-        for blip in block.get("blips") or []:
-            if not isinstance(blip, dict):
-                continue
-            start = _clock_minutes(str(blip.get("start") or ""))
-            stop = _clock_minutes(str(blip.get("end") or ""))
-            if start is None or stop is None or stop <= start:
-                continue
-            left, _width = _box(origin, span, start, stop)
-            name = str(blip.get("name") or "Заход")
-            dot = {"left": left}
-            bucket["dots"].append(dot)
-            dots.append(dot)
-            bucket["intervals"].append(
-                {
-                    "name": f"мельком: {name}",
-                    "start": blip["start"],
-                    "end": blip["end"],
-                    "time_label": fmt_duration((stop - start) * 60),
-                    "muted": True,
-                }
-            )
-    rows = [row for row in grouped.values() if row["minutes"] > 0]
-    rows.sort(key=lambda row: row["minutes"], reverse=True)
-    total = sum(row["minutes"] for row in rows)
-    if not total:
-        return None
-    labels = _share_labels([row["minutes"] for row in rows], total)
-    for row, label in zip(rows, labels):
-        devices = row.pop("devices")
-        if len(devices) == 1:
-            row["name"] = f"{row['name']} · {next(iter(devices))}"
-        row["time_label"] = fmt_duration(row["minutes"] * 60)
-        row["percent"] = label
-    agent_segments = []
-    agent_minutes = 0
-    agent_intervals = []
-    agent_devices = set()
-    for span_item in agent:
-        start = _clock_minutes(str(span_item.get("start") or ""))
-        stop = _clock_minutes(str(span_item.get("end") or ""))
-        if start is None or stop is None or stop <= start:
-            continue
-        device = str(span_item.get("device") or "").strip()
-        if device:
-            agent_devices.add(device)
-        note = str(span_item.get("note") or "Агент")
-        left, width = _box(origin, span, start, stop)
-        agent_minutes += stop - start
-        agent_segments.append({"name": device or "Агент", "left": left, "width": width, "striped": True})
-        agent_intervals.append(
-            {
-                "name": note,
-                "start": span_item["start"],
-                "end": span_item["end"],
-                "time_label": fmt_duration((stop - start) * 60),
-                "muted": False,
-            }
-        )
-    agent_row = None
-    if agent_segments:
-        title = "Агент"
-        if len(agent_devices) == 1:
-            title = f"Агент · {next(iter(agent_devices))}"
-        agent_row = {
-            "name": title,
-            "color": "#a78bfa",
-            "time_label": fmt_duration(agent_minutes * 60),
-            "percent": "вне",
-            "segments": [
-                {**segment, "color": "#7c3aed", "striped": True}
-                for segment in agent_segments
-            ],
-            "dots": [],
-            "intervals": agent_intervals,
-            "outside": True,
-        }
-    return {
-        "total_label": fmt_duration(total * 60),
-        "agent_label": fmt_duration(agent_minutes * 60) if agent_row else None,
-        "hours": _tick_labels(origin, end),
-        "you": you,
-        "dots": dots,
-        "agent_segments": agent_segments,
-        "rows": rows,
-        "agent_row": agent_row,
-    }
-
-
-def fmt_duration(seconds: float) -> str:
-    minutes = int(seconds // 60)
-    if minutes < 1:
-        return "момент"
-    if minutes < 60:
-        return f"{minutes} мин"
-    hours, rest = divmod(minutes, 60)
-    if rest:
-        return f"{hours} ч {rest} мин"
-    return f"{hours} ч"
-
-
-def fmt_time(dt: datetime, tz: ZoneInfo) -> str:
-    aware = dt.replace(tzinfo=timezone.utc)
-    return aware.astimezone(tz).strftime("%H:%M")
+    return Path(
+        os.getenv("ACTIVITY_BREAKDOWN_DIR", activity_root().parent / "activity-days")
+    )
 
 
 def fmt_day(day: date) -> str:
@@ -548,9 +303,9 @@ def fmt_day(day: date) -> str:
 
 
 def local_day_bounds(day: date, tz: ZoneInfo) -> tuple[datetime, datetime]:
-    start = datetime.combine(day, time.min, tzinfo=tz).astimezone(timezone.utc).replace(tzinfo=None)
-    end = start + timedelta(days=1)
-    return start, end
+    from app.services.activity_pipeline import bounds
+
+    return bounds(day, tz)
 
 
 async def get_or_create_settings(session, user_id: int) -> ActivitySettings:
@@ -561,17 +316,14 @@ async def get_or_create_settings(session, user_id: int) -> ActivitySettings:
     if row:
         if not row.skip_apps:
             row.skip_apps = DEFAULT_SKIP_APPS
-        if not row.openai_model:
-            row.openai_model = DEFAULT_MODEL
         if not row.timezone:
             row.timezone = DEFAULT_TIMEZONE
         return row
     row = ActivitySettings(
         user_id=user_id,
-        openai_model=DEFAULT_MODEL,
-        retention_days=7,
+        retention_days=0,
         timezone=DEFAULT_TIMEZONE,
-        sample_minutes=5,
+        sample_minutes=1,
         idle_minutes=3,
         skip_apps=DEFAULT_SKIP_APPS,
     )
@@ -598,16 +350,20 @@ async def authenticate_device(token: str) -> DeviceAuth | None:
         )
 
 
-async def device_config(device: DeviceAuth) -> dict:
+async def device_config(device: DeviceAuth, client_version: str | None = None) -> dict:
     async with async_session() as session:
         row = await session.get(ActivityDevice, device.id)
         if row and row.user_id == device.user_id:
             row.last_seen_at = naive_utc()
+            if client_version:
+                row.client_version = clip(client_version, 20)
         settings = await get_or_create_settings(session, device.user_id)
         payload = {
-            "sample_minutes": settings.sample_minutes or 5,
+            "sample_minutes": settings.sample_minutes or 1,
             "idle_minutes": settings.idle_minutes or 3,
             "skip_apps": skip_names(settings.skip_apps),
+            "device_id": device.id,
+            "protocol_version": 2,
         }
         await session.commit()
         return payload
@@ -622,7 +378,9 @@ async def _places_for(session, user_id: int) -> list[ActivityPlace]:
     return list(result.scalars().all())
 
 
-async def _last_event(session, user_id: int, device_id: int, kind: str) -> ActivityEvent | None:
+async def _last_event(
+    session, user_id: int, device_id: int, kind: str
+) -> ActivityEvent | None:
     result = await session.execute(
         select(ActivityEvent)
         .where(
@@ -636,63 +394,206 @@ async def _last_event(session, user_id: int, device_id: int, kind: str) -> Activ
     return result.scalar_one_or_none()
 
 
-async def record_screen(
-    device: DeviceAuth,
-    app_name: str | None,
-    window_title: str | None,
-    wifi_ssid: str | None,
-    captured_at: str | None,
-) -> IngestResult:
-    app_name = clip(app_name, 120)
-    window_title = clip(window_title, 300)
-    wifi_ssid = clip(wifi_ssid, 128)
-    recorded_at = parse_client_time(captured_at)
+async def dirty_day(session, user_id, day, clear=False):
+    values = dict(
+        user_id=user_id,
+        day=str(day),
+        revision=1,
+        processed_revision=0,
+        attempts=0,
+        next_run_at=naive_utc() + timedelta(seconds=2),
+    )
+    changes = dict(
+        revision=ActivityDay.revision + 1,
+        next_run_at=values["next_run_at"],
+        attempts=0,
+        error=None,
+    )
+    if clear:
+        changes["document"] = None
+    await session.execute(
+        insert(ActivityDay)
+        .values(**values)
+        .on_conflict_do_update(index_elements=["user_id", "day"], set_=changes)
+    )
 
+
+async def dirty_event(session, user_id, recorded_at, settings, interval=45):
+    tz = zone_or_default(settings.timezone)
+    local = naive_utc(recorded_at).replace(tzinfo=timezone.utc).astimezone(tz)
+    for day in {local.date(), (local + timedelta(minutes=interval)).date()}:
+        await dirty_day(session, user_id, day)
+
+
+async def invalidate_user_days(session, user_id):
+    settings = await get_or_create_settings(session, user_id)
+    tz = zone_or_default(settings.timezone)
+    rows = (
+        await session.execute(
+            select(
+                ActivityEvent.recorded_at,
+                ActivityEvent.kind,
+                ActivityEvent.sample_minutes,
+            ).where(ActivityEvent.user_id == user_id)
+        )
+    ).all()
+    days = set()
+    for stamp, kind, interval in rows:
+        stamp = naive_utc(stamp).replace(tzinfo=timezone.utc)
+        minutes = (
+            45 if kind == "location" else (interval or settings.sample_minutes or 1)
+        )
+        days.update(
+            {
+                stamp.astimezone(tz).date().isoformat(),
+                (stamp + timedelta(minutes=minutes)).astimezone(tz).date().isoformat(),
+            }
+        )
+    days.update(
+        (
+            await session.scalars(
+                select(ActivityDay.day).where(ActivityDay.user_id == user_id)
+            )
+        ).all()
+    )
+    for day in days:
+        await dirty_day(session, user_id, day, clear=True)
+
+
+async def record_screens(device, samples):
+    results = []
     async with async_session() as session:
         row = await session.get(ActivityDevice, device.id)
         if not row or row.user_id != device.user_id:
-            return IngestResult(status="error", reason="unknown device")
+            return [
+                IngestResult(status="error", reason="unknown device") for _ in samples
+            ]
         settings = await get_or_create_settings(session, device.user_id)
-        last = await _last_event(session, device.user_id, device.id, "screen")
-        if last and (recorded_at - naive_utc(last.recorded_at)).total_seconds() < 45:
-            row.last_seen_at = recorded_at
-            await session.commit()
-            return IngestResult(status="skipped", reason="too_soon")
-
-        if not app_name and not window_title:
-            row.last_seen_at = recorded_at
-            await session.commit()
-            return IngestResult(status="skipped", reason="no_window")
-
         places = await _places_for(session, device.user_id)
-        place = match_place(places, wifi_ssid, None, None)
-        sensitive = is_sensitive_app(app_name, settings.skip_apps)
-        if sensitive:
-            window_title = None
-        else:
-            window_title = clean_window_title(window_title)
-
-        summary = screen_summary(app_name, window_title, sensitive)
-        event = ActivityEvent(
-            user_id=device.user_id,
-            device_id=device.id,
-            place_id=place.id if place else None,
-            recorded_at=recorded_at,
-            kind="screen",
-            app_name=app_name,
-            window_title=window_title,
-            wifi_ssid=wifi_ssid,
-            summary=summary,
-            analysis_status="skipped",
-        )
-        session.add(event)
-        row.last_seen_at = recorded_at
+        dirty = set()
+        for payload in samples:
+            try:
+                recorded_at = parse_client_time(payload.get("captured_at"))
+                event_id = payload.get("client_event_id") or None
+                if event_id and (
+                    not isinstance(event_id, str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{16,80}", event_id)
+                ):
+                    raise ValueError("bad client_event_id")
+                if event_id and not isinstance(payload.get("captured_at"), str):
+                    raise ValueError("captured_at required")
+                idle = payload.get("idle_seconds")
+                idle = float(idle) if idle is not None else None
+                if idle is not None and (
+                    not math.isfinite(idle) or not 0 <= idle <= 31536000
+                ):
+                    raise ValueError("bad idle_seconds")
+                interval = int(
+                    payload.get("sample_minutes") or settings.sample_minutes or 1
+                )
+                if not 1 <= interval <= 60:
+                    raise ValueError("bad sample_minutes")
+                actor = payload.get("actor") or None
+                if actor not in (None, "auto", "human", "agent"):
+                    raise ValueError("bad actor")
+            except (ValueError, TypeError, OverflowError) as exc:
+                results.append(IngestResult(status="error", reason=str(exc)))
+                continue
+            app = clip(payload.get("app_name"), 120)
+            title = clip(payload.get("window_title"), 300)
+            wifi = clip(payload.get("wifi_ssid"), 128)
+            if not app and not title:
+                results.append(IngestResult(status="skipped", reason="no_window"))
+                continue
+            # Timestamp order is not a rate limit: offline batches may arrive out of order.
+            if not event_id:
+                last = await _last_event(session, device.user_id, device.id, "screen")
+                if (
+                    last
+                    and 0
+                    <= (recorded_at - naive_utc(last.recorded_at)).total_seconds()
+                    < 45
+                ):
+                    results.append(IngestResult(status="skipped", reason="too_soon"))
+                    continue
+            sensitive = is_sensitive_app(app, settings.skip_apps)
+            title = None if sensitive else clean_window_title(title)
+            place = match_place(places, wifi, None, None)
+            values = dict(
+                user_id=device.user_id,
+                device_id=device.id,
+                place_id=place.id if place else None,
+                recorded_at=recorded_at,
+                kind="screen",
+                app_name=app,
+                window_title=title,
+                wifi_ssid=wifi,
+                summary=screen_summary(app, title, sensitive),
+                analysis_status="skipped",
+                client_event_id=event_id,
+                idle_seconds=idle,
+                sample_minutes=interval,
+                actor=actor,
+            )
+            # One real write transaction contains both the event and its day invalidation.
+            stored_id = await session.scalar(
+                insert(ActivityEvent)
+                .values(**values)
+                .on_conflict_do_nothing(index_elements=["device_id", "client_event_id"])
+                .returning(ActivityEvent.id)
+            )
+            if stored_id is None:
+                stored_id = await session.scalar(
+                    select(ActivityEvent.id).where(
+                        ActivityEvent.device_id == device.id,
+                        ActivityEvent.client_event_id == event_id,
+                    )
+                )
+                results.append(IngestResult(status="ok", event_id=stored_id))
+                continue
+            tz = zone_or_default(settings.timezone)
+            local = recorded_at.replace(tzinfo=timezone.utc).astimezone(tz)
+            dirty.update({local.date(), (local + timedelta(minutes=interval)).date()})
+            results.append(
+                IngestResult(
+                    status="ok", event_id=stored_id, place=place.name if place else None
+                )
+            )
+        row.last_seen_at = naive_utc()
+        for day in dirty:
+            await dirty_day(session, device.user_id, day)
         await session.commit()
-        return IngestResult(
-            status="ok",
-            event_id=event.id,
-            place=place.name if place else None,
+    return results
+
+
+async def record_screen(
+    device,
+    app_name,
+    window_title,
+    wifi_ssid,
+    captured_at,
+    client_event_id=None,
+    idle_seconds=None,
+    sample_minutes=None,
+    actor=None,
+):
+    return (
+        await record_screens(
+            device,
+            [
+                dict(
+                    app_name=app_name,
+                    window_title=window_title,
+                    wifi_ssid=wifi_ssid,
+                    captured_at=captured_at,
+                    client_event_id=client_event_id,
+                    idle_seconds=idle_seconds,
+                    sample_minutes=sample_minutes,
+                    actor=actor,
+                )
+            ],
         )
+    )[0]
 
 
 async def record_location(
@@ -704,18 +605,23 @@ async def record_location(
 ) -> IngestResult:
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
         return IngestResult(status="error", reason="bad coordinates")
-    recorded_at = parse_client_time(captured_at)
+    if accuracy is not None and (not math.isfinite(accuracy) or accuracy < 0):
+        return IngestResult(status="error", reason="bad accuracy")
+    try:
+        recorded_at = parse_client_time(captured_at)
+    except ValueError as exc:
+        return IngestResult(status="error", reason=str(exc))
     async with async_session() as session:
         row = await session.get(ActivityDevice, device.id)
         if not row or row.user_id != device.user_id:
             return IngestResult(status="error", reason="unknown device")
-        await get_or_create_settings(session, device.user_id)
+        settings = await get_or_create_settings(session, device.user_id)
         last = await _last_event(session, device.user_id, device.id, "location")
         if last and last.latitude is not None and last.longitude is not None:
             age = (recorded_at - naive_utc(last.recorded_at)).total_seconds()
             distance = haversine_m(lat, lon, last.latitude, last.longitude)
-            if age < 120 and distance < 40:
-                row.last_seen_at = recorded_at
+            if 0 <= age < 120 and distance < 40:
+                row.last_seen_at = naive_utc()
                 await session.commit()
                 return IngestResult(status="skipped", reason="still")
 
@@ -734,7 +640,8 @@ async def record_location(
             analysis_status="skipped",
         )
         session.add(event)
-        row.last_seen_at = recorded_at
+        row.last_seen_at = naive_utc()
+        await dirty_event(session, device.user_id, recorded_at, settings)
         await session.commit()
         return IngestResult(
             status="ok",
@@ -744,326 +651,102 @@ async def record_location(
         )
 
 
-
-def _segment_from(row: dict) -> dict:
-    return {
-        "key": (row["place_id"], row["app_name"], (row["summary"] or "").strip(), row["device_id"]),
-        "first_at": row["recorded_at"],
-        "last_at": row["recorded_at"],
-        "place_id": row["place_id"],
-        "place_name": row["place_name"],
-        "place_note": row["place_note"],
-        "summary": row["summary"],
-        "app_name": row["app_name"],
-        "title": row["title"],
-        "browser": row["browser"],
-        "private": row["private"],
-        "device_id": row["device_id"],
-        "device_name": row["device_name"],
-        "platform_label": row["platform_label"],
-        "lat": row.get("lat"),
-        "lon": row.get("lon"),
-        "count": 1,
-    }
-
-
-def build_segments(rows: list[dict], gap: timedelta, tz: ZoneInfo, now_utc: datetime, pad: timedelta | None):
-    segments: list[dict] = []
-    for row in rows:
-        current = _segment_from(row)
-        if segments:
-            prev = segments[-1]
-            if prev["key"] == current["key"] and (row["recorded_at"] - prev["last_at"]) <= gap:
-                prev["last_at"] = row["recorded_at"]
-                prev["count"] += 1
-                if row["summary"]:
-                    prev["summary"] = row["summary"]
-                continue
-        segments.append(current)
-
-    for index, seg in enumerate(segments):
-        end = seg["last_at"]
-        if pad is not None:
-            padded = seg["last_at"] + pad
-            if index + 1 < len(segments):
-                nxt = segments[index + 1]["first_at"]
-                if padded > nxt:
-                    padded = nxt
-            if padded > now_utc:
-                padded = now_utc
-            if padded > end:
-                end = padded
-        seconds = max(0, (end - seg["first_at"]).total_seconds())
-        seg["start"] = seg["first_at"]
-        seg["end"] = end
-        seg["start_label"] = fmt_time(seg["first_at"], tz)
-        seg["end_label"] = fmt_time(end, tz)
-        seg["duration_label"] = fmt_duration(seconds)
-        seg["seconds"] = seconds
-        seg.pop("key", None)
-        seg.pop("first_at", None)
-        seg.pop("last_at", None)
-    return segments
-
-
-def _presence_line(seg: dict) -> dict:
-    return {
-        "device_name": seg["device_name"],
-        "platform_label": seg["platform_label"],
-        "app_name": seg["app_name"],
-        "title": seg.get("title"),
-        "browser": seg.get("browser"),
-        "place_name": seg.get("place_name"),
-        "place_note": seg.get("place_note"),
-        "private": seg.get("private", False),
-    }
-
-
-def build_presence(segments: list[dict], tz: ZoneInfo) -> list[dict]:
-    """Split the day so overlapping computers become one nearby block."""
-    spanned = []
-    for seg in segments:
-        start = seg["start"]
-        end = seg["end"]
-        if end <= start:
-            end = start + timedelta(seconds=1)
-        spanned.append((start, end, seg))
-    if not spanned:
-        return []
-
-    bounds = sorted({point for start, end, _seg in spanned for point in (start, end)})
-    slices = []
-    for t0, t1 in zip(bounds, bounds[1:]):
-        if t1 <= t0:
-            continue
-        active = [seg for start, end, seg in spanned if start < t1 and end > t0]
-        if not active:
-            continue
-        signature = tuple(
-            sorted(
-                (
-                    seg["device_id"],
-                    seg.get("app_name") or "",
-                    seg.get("title") or "",
-                    seg.get("summary") or "",
-                )
-                for seg in active
-            )
-        )
-        if slices and slices[-1]["signature"] == signature and slices[-1]["end"] == t0:
-            slices[-1]["end"] = t1
-            continue
-        slices.append({"signature": signature, "start": t0, "end": t1, "segments": active})
-
-    blocks = []
-    for item in slices:
-        seconds = max(0, (item["end"] - item["start"]).total_seconds())
-        lines = []
-        seen = set()
-        for seg in item["segments"]:
-            if seg["device_id"] in seen:
-                continue
-            seen.add(seg["device_id"])
-            lines.append(_presence_line(seg))
-        lines.sort(key=lambda line: line["device_name"].casefold())
-        places = {line["place_name"] for line in lines if line["place_name"]}
-        place_label = next(iter(places)) if len(places) == 1 else None
-        place_note = None
-        if place_label:
-            notes = {line["place_note"] for line in lines if line["place_name"] == place_label and line["place_note"]}
-            place_note = next(iter(notes)) if len(notes) == 1 else None
-        blocks.append(
-            {
-                "nearby": len(seen) >= 2,
-                "start_label": fmt_time(item["start"], tz),
-                "end_label": fmt_time(item["end"], tz),
-                "duration_label": fmt_duration(seconds),
-                "seconds": seconds,
-                "place_label": place_label,
-                "place_note": place_note,
-                "lines": lines,
-            }
-        )
-    return blocks
-
-
-async def build_day(user_id: int, day: date) -> dict:
-    async with async_session() as session:
-        settings = await get_or_create_settings(session, user_id)
-        await session.commit()
-        await assign_unnamed_places(session, user_id)
-        await session.commit()
-        tz = zone_or_default(settings.timezone)
-        start, end = local_day_bounds(day, tz)
-        result = await session.execute(
-            select(ActivityEvent, ActivityPlace, ActivityDevice)
-            .join(ActivityDevice, ActivityDevice.id == ActivityEvent.device_id)
-            .outerjoin(ActivityPlace, ActivityPlace.id == ActivityEvent.place_id)
-            .where(
-                ActivityEvent.user_id == user_id,
-                ActivityDevice.user_id == user_id,
-                ActivityEvent.recorded_at >= start,
-                ActivityEvent.recorded_at < end,
-            )
-            .order_by(ActivityEvent.recorded_at.asc())
-        )
-        screen_rows = []
-        location_rows = []
-        for event, place, device in result.all():
-            if place and place.user_id != user_id:
-                place = None
-            item = {
-                "id": event.id,
-                "recorded_at": naive_utc(event.recorded_at),
-                "place_id": place.id if place else None,
-                "place_name": place.name if place else None,
-                "place_note": place.note if place else None,
-                "summary": event.summary,
-                "app_name": event.app_name,
-                "title": event.window_title,
-                "browser": browser_name(event.app_name),
-                "private": event.summary == "Личное приложение",
-                "device_id": device.id,
-                "device_name": device.name,
-                "platform_label": PLATFORM_LABELS.get(device.platform, device.platform),
-                "lat": event.latitude,
-                "lon": event.longitude,
-            }
-            if event.kind == "location":
-                location_rows.append(item)
-            else:
-                screen_rows.append(item)
-
-        place_count = await session.scalar(
-            select(func.count()).select_from(ActivityPlace).where(ActivityPlace.user_id == user_id)
-        )
-        device_count = await session.scalar(
-            select(func.count()).select_from(ActivityDevice).where(ActivityDevice.user_id == user_id)
-        )
-        sample = max(1, settings.sample_minutes or 5)
-        now_utc = naive_utc()
-        pad = timedelta(minutes=sample)
-        gap = timedelta(minutes=20)
-        per_device: dict[int, list] = {}
-        for row in screen_rows:
-            per_device.setdefault(row["device_id"], []).append(row)
-        screen = []
-        for rows in per_device.values():
-            screen.extend(build_segments(rows, gap, tz, now_utc, pad))
-        screen.sort(key=lambda seg: (seg["start"], seg["device_name"]))
-        presence = build_presence(screen, tz)
-        location = build_segments(location_rows, timedelta(minutes=90), tz, now_utc, None)
-        total_seconds = sum(block["seconds"] for block in presence)
-        nearby_seconds = sum(block["seconds"] for block in presence if block["nearby"])
-        today = datetime.now(tz).date()
-        return {
-            "day": day.isoformat(),
-            "day_label": fmt_day(day),
-            "is_today": day == today,
-            "prev_date": (day - timedelta(days=1)).isoformat(),
-            "next_date": None if day >= today else (day + timedelta(days=1)).isoformat(),
-            "presence": presence,
-            "location_segments": location,
-            "screen_total": fmt_duration(total_seconds) if total_seconds >= 60 else None,
-            "nearby_total": fmt_duration(nearby_seconds) if nearby_seconds >= 60 else None,
-            "has_places": bool(place_count),
-            "has_devices": bool(device_count),
-        }
-
-
 async def _merged_document(user_id: int, day: date) -> tuple[dict, dict]:
-    """Load raw samples and return the layered day plus page navigation."""
-    from app.services.activity_day import GeoPoint, PlaceSignature, ScreenSample, read_day
+    from app.services.activity_pipeline import assemble
+    from app.services.activity_day import DAY_VERSION
 
     async with async_session() as session:
         settings = await get_or_create_settings(session, user_id)
-        await session.commit()
         tz = zone_or_default(settings.timezone)
-        start, end = local_day_bounds(day, tz)
-        result = await session.execute(
-            select(ActivityEvent, ActivityDevice)
-            .join(ActivityDevice, ActivityDevice.id == ActivityEvent.device_id)
-            .where(
-                ActivityEvent.user_id == user_id,
-                ActivityDevice.user_id == user_id,
-                ActivityEvent.recorded_at >= start,
-                ActivityEvent.recorded_at < end,
-            )
-            .order_by(ActivityEvent.recorded_at.asc())
-        )
-        rows = result.all()
+        today = datetime.now(tz).date()
+        job = await session.get(ActivityDay, (user_id, day.isoformat()))
         places = await _places_for(session, user_id)
-        place_count = await session.scalar(
-            select(func.count()).select_from(ActivityPlace).where(ActivityPlace.user_id == user_id)
-        )
         device_count = await session.scalar(
-            select(func.count()).select_from(ActivityDevice).where(ActivityDevice.user_id == user_id)
+            select(func.count())
+            .select_from(ActivityDevice)
+            .where(ActivityDevice.user_id == user_id)
         )
-        sample = max(1, settings.sample_minutes or 1)
-
-    points = []
-    screens = []
-    raw_latest = None
-    for event, device in rows:
-        recorded = naive_utc(event.recorded_at)
-        if raw_latest is None or recorded > raw_latest:
-            raw_latest = recorded
-        if event.kind == "location" and event.latitude is not None and event.longitude is not None:
-            points.append(GeoPoint(recorded, event.latitude, event.longitude))
-        elif event.kind == "screen":
-            screens.append(
-                ScreenSample(
-                    recorded,
-                    device.name,
-                    event.app_name or "",
-                    event.window_title or "",
-                    event.wifi_ssid,
+        document = None
+        if job and job.document and job.revision == job.processed_revision:
+            try:
+                cached = json.loads(job.document)
+                if cached.get("version") == DAY_VERSION:
+                    document = cached
+            except (ValueError, TypeError):
+                pass
+        if document is None:
+            start, end = local_day_bounds(day, tz)
+            result = await session.execute(
+                select(ActivityEvent, ActivityDevice)
+                .join(ActivityDevice, ActivityDevice.id == ActivityEvent.device_id)
+                .where(
+                    ActivityEvent.user_id == user_id,
+                    ActivityDevice.user_id == user_id,
+                    ActivityEvent.recorded_at >= start - timedelta(minutes=120),
+                    ActivityEvent.recorded_at < end,
                 )
+                .order_by(ActivityEvent.recorded_at)
             )
-    signatures = [
-        PlaceSignature(
-            name=place.name,
-            lat=place.latitude,
-            lon=place.longitude,
-            ssid=place.wifi_ssid,
-            created_at=naive_utc(place.created_at) if place.created_at else datetime(1970, 1, 1),
-            corrected_at=naive_utc(place.corrected_at) if place.corrected_at else None,
+            rows = [
+                dict(
+                    **{
+                        c.name: getattr(e, c.name)
+                        for c in ActivityEvent.__table__.columns
+                    },
+                    device_name=d.name,
+                )
+                for e, d in result.all()
+            ]
+            prefs = {
+                c.name: getattr(settings, c.name)
+                for c in ActivitySettings.__table__.columns
+            }
+            place_rows = [
+                {c.name: getattr(p, c.name) for c in ActivityPlace.__table__.columns}
+                for p in places
+            ]
+            document = await asyncio.to_thread(assemble, day, prefs, rows, place_rows)
+            if rows and job is None:
+                await dirty_day(session, user_id, day)
+        await session.commit()
+        extras = dict(
+            day=day.isoformat(),
+            day_label=fmt_day(day),
+            is_today=day == today,
+            prev_date=(day - timedelta(days=1)).isoformat(),
+            next_date=None if day >= today else (day + timedelta(days=1)).isoformat(),
+            has_places=bool(places),
+            has_devices=bool(device_count),
+            snapshot=job.processed_at.isoformat() if job and job.processed_at else None,
+            revision=job.revision if job else 0,
+            processed_revision=job.processed_revision if job else 0,
+            processing=bool(job and job.revision != job.processed_revision),
+            processing_error=job.error if job else None,
+            processed_at=job.processed_at.replace(tzinfo=timezone.utc)
+            .astimezone(tz)
+            .strftime("%d.%m %H:%M:%S")
+            if job and job.processed_at
+            else None,
         )
-        for place in places
-    ]
-    today = datetime.now(tz).date()
-    document = read_day(
-        breakdown_dir(),
-        user_id,
-        day,
-        today,
-        tz,
-        points,
-        screens,
-        signatures,
-        raw_latest,
-        sample_minutes=sample,
-    )
-    extras = {
-        "day": day.isoformat(),
-        "day_label": fmt_day(day),
-        "is_today": day == today,
-        "prev_date": (day - timedelta(days=1)).isoformat(),
-        "next_date": None if day >= today else (day + timedelta(days=1)).isoformat(),
-        "has_places": bool(place_count),
-        "has_devices": bool(device_count),
-    }
     return document, extras
 
 
-async def layered_page(user_id: int, day: date, selected_start: str | None = None) -> dict:
+async def layered_page(
+    user_id: int, day: date, selected_start: str | None = None
+) -> dict:
     from app.services.activity_day import present_day
 
     try:
         document, extras = await _merged_document(user_id, day)
     except Exception:
         logger.exception("activity layered page")
-        document = {"error": "raw", "body": [], "screen": [], "agent": [], "disputes": []}
+        document = {
+            "error": "raw",
+            "body": [],
+            "screen": [],
+            "agent": [],
+            "disputes": [],
+        }
         tz_now = datetime.now(zone_or_default(None))
         today = tz_now.date()
         extras = {
@@ -1071,7 +754,9 @@ async def layered_page(user_id: int, day: date, selected_start: str | None = Non
             "day_label": fmt_day(day),
             "is_today": day == today,
             "prev_date": (day - timedelta(days=1)).isoformat(),
-            "next_date": None if day >= today else (day + timedelta(days=1)).isoformat(),
+            "next_date": None
+            if day >= today
+            else (day + timedelta(days=1)).isoformat(),
             "has_places": False,
             "has_devices": True,
         }
@@ -1093,7 +778,7 @@ def _matching_place(places, lat: float, lon: float, ssid: str | None):
         if place.latitude is None or place.longitude is None:
             continue
         distance = haversine_m(lat, lon, place.latitude, place.longitude)
-        if distance > STAY_RADIUS_M:
+        if distance > (place.radius_m or STAY_RADIUS_M):
             continue
         place_ssid = (place.wifi_ssid or "").strip()
         if stay_ssid and place_ssid and stay_ssid != place_ssid:
@@ -1104,7 +789,9 @@ def _matching_place(places, lat: float, lon: float, ssid: str | None):
     return found
 
 
-async def remember_stay(user_id: int, day: date, stay_start: str, name: str) -> str | None:
+async def remember_stay(
+    user_id: int, day: date, stay_start: str, name: str
+) -> str | None:
     """Store one signature for the selected stay. A second save updates that row."""
     from app.services.activity_day import STAY_RADIUS_M
 
@@ -1138,6 +825,23 @@ async def remember_stay(user_id: int, day: date, stay_start: str, name: str) -> 
         places = await _places_for(session, user_id)
         match = _matching_place(places, center["lat"], center["lon"], ssid or None)
         if match:
+            labels = (
+                json.loads(match.labels_json)
+                if match.labels_json
+                else [
+                    dict(
+                        name=match.name,
+                        at=str(match.created_at or datetime(1970, 1, 1)),
+                    )
+                ]
+            )
+            labels = [
+                label
+                for label in labels
+                if naive_utc(datetime.fromisoformat(label["at"])) != stamp
+            ]
+            labels.append(dict(name=name, at=stamp.isoformat()))
+            match.labels_json = json.dumps(labels, ensure_ascii=False)
             match.name = name
             match.corrected_at = stamp
             if ssid and not (match.wifi_ssid or "").strip():
@@ -1153,8 +857,12 @@ async def remember_stay(user_id: int, day: date, stay_start: str, name: str) -> 
                     radius_m=STAY_RADIUS_M,
                     created_at=stamp,
                     corrected_at=stamp,
+                    labels_json=json.dumps(
+                        [dict(name=name, at=stamp.isoformat())], ensure_ascii=False
+                    ),
                 )
             )
+        await invalidate_user_days(session, user_id)
         await session.commit()
     try:
         await _merged_document(user_id, day)
@@ -1253,6 +961,19 @@ async def upsert_place(
         else:
             place = ActivityPlace(user_id=user_id, name=name)
             session.add(place)
+        if place_id and place.name != name:
+            labels = (
+                json.loads(place.labels_json)
+                if place.labels_json
+                else [
+                    dict(
+                        name=place.name,
+                        at=place.created_at.replace(tzinfo=timezone.utc).isoformat(),
+                    )
+                ]
+            )
+            labels.append(dict(name=name, at=datetime.now(timezone.utc).isoformat()))
+            place.labels_json = json.dumps(labels, ensure_ascii=False)
         place.name = name
         place.note = note
         place.wifi_ssid = wifi
@@ -1260,29 +981,9 @@ async def upsert_place(
         place.longitude = lon
         place.radius_m = radius
         await session.flush()
-        await assign_unnamed_places(session, user_id)
+        await invalidate_user_days(session, user_id)
         await session.commit()
     return None
-
-
-async def assign_unnamed_places(session, user_id: int) -> None:
-    """Name past points that have no place yet. Leave points that already have one."""
-    places = await _places_for(session, user_id)
-    if not places:
-        return
-    result = await session.execute(
-        select(ActivityEvent).where(
-            ActivityEvent.user_id == user_id,
-            ActivityEvent.place_id.is_(None),
-        )
-    )
-    for event in result.scalars().all():
-        place = match_place(places, event.wifi_ssid, event.latitude, event.longitude)
-        if not place:
-            continue
-        event.place_id = place.id
-        if event.kind == "location":
-            event.summary = location_summary(place)
 
 
 async def delete_place(user_id: int, place_id: int) -> bool:
@@ -1290,15 +991,13 @@ async def delete_place(user_id: int, place_id: int) -> bool:
         place = await session.get(ActivityPlace, place_id)
         if not place or place.user_id != user_id:
             return False
-        result = await session.execute(
-            select(ActivityEvent).where(
-                ActivityEvent.place_id == place_id,
-                ActivityEvent.user_id == user_id,
-            )
+        await session.execute(
+            update(ActivityEvent)
+            .where(ActivityEvent.place_id == place_id, ActivityEvent.user_id == user_id)
+            .values(place_id=None)
         )
-        for event in result.scalars().all():
-            event.place_id = None
         await session.delete(place)
+        await invalidate_user_days(session, user_id)
         await session.commit()
         return True
 
@@ -1315,16 +1014,25 @@ async def list_devices(user_id: int, tz_name: str) -> list[dict]:
         for device in result.scalars().all():
             seen = None
             if device.last_seen_at:
-                seen_day = naive_utc(device.last_seen_at).replace(tzinfo=timezone.utc).astimezone(tz)
+                seen_day = (
+                    naive_utc(device.last_seen_at)
+                    .replace(tzinfo=timezone.utc)
+                    .astimezone(tz)
+                )
                 seen = seen_day.strftime("%d.%m %H:%M")
             devices.append(
                 {
                     "id": device.id,
                     "name": device.name,
                     "platform": device.platform,
-                    "platform_label": PLATFORM_LABELS.get(device.platform, device.platform),
+                    "platform_label": PLATFORM_LABELS.get(
+                        device.platform, device.platform
+                    ),
                     "token": device.token,
                     "last_seen": seen,
+                    "client_version": device.client_version,
+                    "update_required": device.platform != "iphone"
+                    and device.client_version != "2",
                 }
             )
         return devices
@@ -1358,6 +1066,7 @@ async def rename_device(user_id: int, device_id: int, name: str) -> bool:
         if not device or device.user_id != user_id:
             return False
         device.name = name
+        await invalidate_user_days(session, user_id)
         await session.commit()
         return True
 
@@ -1378,16 +1087,23 @@ async def delete_device(user_id: int, device_id: int) -> bool:
         if not device or device.user_id != user_id:
             return False
         result = await session.execute(
-            select(ActivityEvent).where(
+            select(ActivityEvent.screenshot_path).where(
                 ActivityEvent.device_id == device_id,
                 ActivityEvent.user_id == user_id,
             )
         )
-        for event in result.scalars().all():
-            remove_screenshot(event.screenshot_path)
-            await session.delete(event)
+        for path in result.scalars().all():
+            remove_screenshot(path)
+        await session.execute(
+            delete(ActivityEvent).where(
+                ActivityEvent.device_id == device_id, ActivityEvent.user_id == user_id
+            )
+        )
         await session.delete(device)
+        await session.flush()
+        await invalidate_user_days(session, user_id)
         await session.commit()
+        shutil.rmtree(breakdown_dir() / str(int(user_id)), ignore_errors=True)
         return True
 
 
@@ -1397,9 +1113,10 @@ async def settings_view(user_id: int) -> dict:
         await session.commit()
         return {
             "timezone": settings.timezone or DEFAULT_TIMEZONE,
-            "sample_minutes": settings.sample_minutes or 5,
+            "sample_minutes": settings.sample_minutes or 1,
             "idle_minutes": settings.idle_minutes or 3,
             "skip_apps": settings.skip_apps or DEFAULT_SKIP_APPS,
+            "retention_days": settings.retention_days or 0,
         }
 
 
@@ -1409,6 +1126,7 @@ async def update_settings(
     sample_minutes: str,
     idle_minutes: str,
     skip_apps: str,
+    retention_days: str = "0",
 ) -> str | None:
     tz_name = (timezone_name or "").strip() or DEFAULT_TIMEZONE
     try:
@@ -1418,12 +1136,15 @@ async def update_settings(
     try:
         sample = int(sample_minutes)
         idle = int(idle_minutes)
+        retention = int(retention_days)
     except ValueError:
         return "Интервалы должны быть числами"
     if not 1 <= sample <= 60:
         return "Интервал записи от 1 до 60 минут"
     if not 1 <= idle <= 60:
         return "Пауза простоя от 1 до 60 минут"
+    if not 0 <= retention <= 3650:
+        return "Хранение от 0 до 3650 дней; 0 — без автоматического удаления"
     apps = (skip_apps or "").strip()
     if len(apps) > 4000:
         return "Список приложений слишком длинный"
@@ -1434,41 +1155,71 @@ async def update_settings(
         settings.sample_minutes = sample
         settings.idle_minutes = idle
         settings.skip_apps = apps or DEFAULT_SKIP_APPS
+        settings.retention_days = retention
+        await invalidate_user_days(session, user_id)
         await session.commit()
     return None
 
 
-async def purge_expired_screenshots():
-    now = naive_utc()
+async def purge_activity_history():
+    """Apply the user's explicit event retention; zero keeps the full history."""
     async with async_session() as session:
-        settings_rows = (await session.execute(select(ActivitySettings))).scalars().all()
-        retention = {row.user_id: row.retention_days or 7 for row in settings_rows}
-        result = await session.execute(
-            select(ActivityEvent).where(ActivityEvent.screenshot_path.is_not(None))
-        )
-        removed = 0
-        for event in result.scalars().all():
-            days = retention.get(event.user_id, 7)
-            recorded = naive_utc(event.recorded_at) if event.recorded_at else None
-            if recorded and now - recorded > timedelta(days=days):
-                remove_screenshot(event.screenshot_path)
-                event.screenshot_path = None
-                removed += 1
+        prefs = (await session.scalars(select(ActivitySettings))).all()
+        for settings in prefs:
+            if not settings.retention_days:
+                continue
+            tz = zone_or_default(settings.timezone)
+            cutoff_day = datetime.now(tz).date() - timedelta(
+                days=settings.retention_days
+            )
+            cutoff, _ = local_day_bounds(cutoff_day, tz)
+            images = (
+                await session.scalars(
+                    select(ActivityEvent.screenshot_path).where(
+                        ActivityEvent.user_id == settings.user_id,
+                        ActivityEvent.recorded_at < cutoff,
+                        ActivityEvent.screenshot_path.is_not(None),
+                    )
+                )
+            ).all()
+            for image in images:
+                remove_screenshot(image)
+            await session.execute(
+                delete(ActivityEvent).where(
+                    ActivityEvent.user_id == settings.user_id,
+                    ActivityEvent.recorded_at < cutoff,
+                )
+            )
+            await session.execute(
+                delete(ActivityDay).where(
+                    ActivityDay.user_id == settings.user_id,
+                    ActivityDay.day < cutoff_day.isoformat(),
+                )
+            )
+            await invalidate_user_days(session, settings.user_id)
+            folder = breakdown_dir() / str(int(settings.user_id))
+            if folder.exists():
+                shutil.rmtree(folder)
         await session.commit()
-        if removed:
-            logger.info("Removed %s expired activity screenshots", removed)
 
 
 async def delete_user_activity_data(user_id: int):
-    breakdown_dir().mkdir(parents=True, exist_ok=True)
-    (breakdown_dir() / f".deleted-user-{int(user_id)}").touch()
     for root in (activity_root(), breakdown_dir().resolve()):
         folder = (root / str(int(user_id))).resolve()
         if folder.parent == root and folder.exists():
             shutil.rmtree(folder)
     async with async_session() as session:
-        await session.execute(delete(ActivityEvent).where(ActivityEvent.user_id == user_id))
-        await session.execute(delete(ActivityPlace).where(ActivityPlace.user_id == user_id))
-        await session.execute(delete(ActivityDevice).where(ActivityDevice.user_id == user_id))
-        await session.execute(delete(ActivitySettings).where(ActivitySettings.user_id == user_id))
+        await session.execute(delete(ActivityDay).where(ActivityDay.user_id == user_id))
+        await session.execute(
+            delete(ActivityEvent).where(ActivityEvent.user_id == user_id)
+        )
+        await session.execute(
+            delete(ActivityPlace).where(ActivityPlace.user_id == user_id)
+        )
+        await session.execute(
+            delete(ActivityDevice).where(ActivityDevice.user_id == user_id)
+        )
+        await session.execute(
+            delete(ActivitySettings).where(ActivitySettings.user_id == user_id)
+        )
         await session.commit()

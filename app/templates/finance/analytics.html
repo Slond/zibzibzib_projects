@@ -221,6 +221,11 @@
 
 <div class="content" style="padding-bottom:100px;">
 <div class="analytics-container">
+    <div id="rate-warning" class="error" role="status" hidden></div>
+    <div id="load-error" class="error" role="alert" hidden>
+        Не удалось загрузить аналитику.
+        <button type="button" class="btn small" onclick="loadAnalytics()">Повторить</button>
+    </div>
     <!-- Event Filter -->
     {% if events|length > 1 %}
     <div class="event-filter">
@@ -406,6 +411,7 @@ function formatAmount(n) {
 }
 
 async function loadAnalytics() {
+    document.getElementById('load-error').hidden = true;
     const params = new URLSearchParams();
     if (dateFrom && dateTo) {
         params.append('date_from', dateFrom);
@@ -430,8 +436,10 @@ async function loadAnalytics() {
         const dailyData = await dailyRes.json();
         const categoryData = await categoryRes.json();
         const warning = document.getElementById('rate-warning');
-        warning.hidden = !categoryData.unconverted_count;
-        warning.textContent = `Не включены в итог $: ${categoryData.unconverted_count || 0} операций без подтверждённого курса.`;
+        if (warning) {
+            warning.hidden = !categoryData.unconverted_count;
+            warning.textContent = `Не включены в итог $: ${categoryData.unconverted_count || 0} операций без подтверждённого курса.`;
+        }
         
         // Update summary (all values in USD)
         const totalExpenses = dailyData.reduce((sum, d) => sum + d.expenses, 0);
@@ -451,9 +459,15 @@ async function loadAnalytics() {
         
     } catch (e) {
         console.error('Failed to load analytics:', e);
-        document.getElementById('total-expenses').textContent = '$0';
-        document.getElementById('total-income').textContent = '$0';
-        document.getElementById('total-balance').textContent = '$0';
+        document.getElementById('load-error').hidden = false;
+        ['total-expenses', 'total-income', 'total-balance'].forEach(id => {
+            document.getElementById(id).textContent = '—';
+        });
+        if (dailyChart) { dailyChart.destroy(); dailyChart = null; }
+        if (categoryChart) { categoryChart.destroy(); categoryChart = null; }
+        document.getElementById('category-list').innerHTML = '';
+        const warning = document.getElementById('rate-warning');
+        if (warning) warning.hidden = true;
     }
 }
 

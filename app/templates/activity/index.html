@@ -42,8 +42,9 @@
     <p class="day-failed">День не собрался. Сырые события не прочитались.</p>
     {% endif %}
 
+    <p class="hint">{% if processed_at %}Сводка обновлена {{ processed_at }}.{% endif %} {% if processing %}Новые события учтены, фоновая сводка обновляется.{% endif %} {% if processing_error %}Фоновая обработка требует внимания; показаны исходные события.{% endif %} {% if poor_location_points %}Неточные точки геолокации пропущены: {{ poor_location_points }}.{% endif %}</p>
     <div class="vscroll">
-    <div class="vday">
+    <div class="vday" style="--columns: {{ columns|length }}; --day-minutes: {{ day_minutes|default(1440) }};">
         <div class="vgutter">
             <div class="vlabel"></div>
             <div class="vtrack">
@@ -94,11 +95,42 @@
 {% block extra_scripts %}
 <script>
 (function () {
+    var revision = {{ revision|default(0)|tojson }};
+    var processed = {{ processed_revision|default(0)|tojson }};
+    var snapshot = {{ snapshot|default(none)|tojson }};
+    var edited = false;
+    var timeline = document.querySelector('.vscroll');
+    var scrollKey = 'activity-scroll-' + {{ day|tojson }};
+    if (timeline) {
+        try {
+            var scrollPosition = JSON.parse(sessionStorage.getItem(scrollKey));
+            if (scrollPosition) {
+                timeline.scrollTop = scrollPosition.top;
+                timeline.scrollLeft = scrollPosition.left;
+            }
+        } catch (_) {}
+        timeline.addEventListener('scroll', function () {
+            try { sessionStorage.setItem(scrollKey, JSON.stringify({top: timeline.scrollTop, left: timeline.scrollLeft})); } catch (_) {}
+        }, {passive: true});
+    }
+    document.querySelectorAll('input').forEach(function (input) {
+        input.addEventListener('input', function () { edited = true; });
+    });
+    setInterval(async function () {
+        if (document.hidden || edited || /INPUT|TEXTAREA/.test(document.activeElement.tagName)) return;
+        try {
+            var response = await fetch('/activity/status?date=' + {{ day|tojson }}, {cache: 'no-store'});
+            if (!response.ok || !response.headers.get('content-type').includes('application/json')) return;
+            var status = await response.json();
+            if (status.revision !== revision || status.processed_revision !== processed || status.snapshot !== snapshot) location.reload();
+        } catch (_) { /* Keep the current day visible while offline. */ }
+    }, 30000);
     var field = document.getElementById("place-name");
     var hidden = document.getElementById("stay-start");
     if (!field || !hidden) return;
     document.querySelectorAll(".vblock.stay").forEach(function (btn) {
         btn.addEventListener("click", function () {
+            edited = true;
             document.querySelectorAll(".vblock.stay").forEach(function (other) {
                 other.classList.remove("selected");
             });

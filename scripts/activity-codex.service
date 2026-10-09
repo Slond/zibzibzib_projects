@@ -1,5 +1,5 @@
 [Unit]
-Description=Activity day aggregation worker
+Description=Deterministic activity day worker
 After=network-online.target docker.service
 Wants=network-online.target
 

@@ -28,7 +28,7 @@ from app.auth import (
     serializer,
 )
 from app.services.scheduler import poll_yandex_devices, process_recurring_transactions, poll_iqair_sensors
-from app.services.activity import purge_expired_screenshots
+from app.services.activity import purge_activity_history
 from app.services.awg.runtime import poll_traffic
 from app.services.currency import CurrencyRateUnavailable
 from app.routers import dashboard, finance, weather, activity, vpn
@@ -91,7 +91,7 @@ async def lifespan(app: FastAPI):
     await poll_iqair_sensors()
 
     scheduler.add_job(
-        purge_expired_screenshots,
+        purge_activity_history,
         "interval",
         hours=6,
         id="activity_purge",

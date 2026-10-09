@@ -358,11 +358,9 @@ class ActivitySettings(Base):
     __tablename__ = "activity_settings"
 
     user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
-    openai_api_key = Column(String, nullable=True)
-    openai_model = Column(String, default="gpt-4o-mini")
-    retention_days = Column(Integer, default=7)
+    retention_days = Column(Integer, default=0)  # 0 means keep history until explicitly deleted
     timezone = Column(String, default="Asia/Almaty")
-    sample_minutes = Column(Integer, default=5)
+    sample_minutes = Column(Integer, default=1)
     idle_minutes = Column(Integer, default=3)
     skip_apps = Column(Text, nullable=True)
 
@@ -378,6 +376,7 @@ class ActivityDevice(Base):
     token = Column(String, unique=True, nullable=False, default=generate_webhook_token, index=True)
     created_at = Column(DateTime, default=utcnow)
     last_seen_at = Column(DateTime, nullable=True)
+    client_version = Column(String(20), nullable=True)
 
 
 class ActivityPlace(Base):
@@ -394,6 +393,7 @@ class ActivityPlace(Base):
     radius_m = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=utcnow)
     corrected_at = Column(DateTime, nullable=True)
+    labels_json = Column(Text, nullable=True)
 
 
 class ActivityEvent(Base):
@@ -417,11 +417,28 @@ class ActivityEvent(Base):
     analysis_status = Column(String, default="skipped")  # pending, done, skipped, error
     analysis_error = Column(Text, nullable=True)
     created_at = Column(DateTime, default=utcnow)
-
+    client_event_id = Column(String(80), nullable=True)
+    idle_seconds = Column(Float, nullable=True)
+    sample_minutes = Column(Integer, nullable=True)
+    actor = Column(String(12), nullable=True)
     __table_args__ = (
         Index("idx_activity_user_time", "user_id", "recorded_at"),
     )
 
+
+class ActivityDay(Base):
+    """Durable revisioned queue and materialized view, owned by the day worker."""
+    __tablename__ = "activity_days"
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    day = Column(String(10), primary_key=True)
+    revision = Column(Integer, nullable=False, default=1)
+    processed_revision = Column(Integer, nullable=False, default=0)
+    document = Column(Text, nullable=True)
+    processed_at = Column(DateTime, nullable=True)
+    source_latest = Column(DateTime, nullable=True)
+    next_run_at = Column(DateTime, nullable=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    error = Column(String, nullable=True)
 
 # ============================================
 # Database initialization

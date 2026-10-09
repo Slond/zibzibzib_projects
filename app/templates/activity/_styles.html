@@ -208,7 +208,7 @@
 }
 .vday {
     display: grid;
-    grid-template-columns: 52px 1fr 1fr 1fr;
+    grid-template-columns: 52px repeat(var(--columns, 3), minmax(0, 1fr));
     gap: 10px;
     align-items: start;
 }
@@ -226,7 +226,7 @@
 }
 .vtrack {
     position: relative;
-    height: 5760px;
+    height: calc(var(--day-minutes, 1440) * 4px);
     border-radius: 12px;
     background-color: rgba(255,255,255,0.03);
     background-image:
@@ -284,6 +284,7 @@ button.vblock {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 .vblock.stay:focus { outline: 2px solid #4361ee; outline-offset: 1px; }
+.vblock.uncertain { background: #514663; }
 .vdock {
     position: sticky;
     bottom: 12px;
