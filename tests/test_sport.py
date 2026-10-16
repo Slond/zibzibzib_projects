@@ -8,7 +8,7 @@ import sys
 
 def test_training_workspace(tmp_path):
     script = r'''
-import asyncio, copy
+import asyncio, copy, json, re
 from datetime import date, timedelta
 import httpx
 from sqlalchemy import select, text
@@ -42,6 +42,9 @@ async def check():
         page=await a.get('/sport'); assert page.status_code==200
         assert '<script>test</script>' not in page.text and 'global-navigation' not in page.text
         assert 'private, no-store'==page.headers['cache-control']
+        boot=json.loads(re.search(r'<script id="sport-boot" type="application/json">(.*?)</script>',page.text,re.S).group(1))
+        assert len(boot['catalog'])==1133 and boot['catalog']['front']['name']=='Фронтальный присед'
+        shared_id=next(key for key,row in boot['catalog'].items() if 'One Leg Dumbbell Squat' in row['en'])
         initial=(await a.get('/sport/api/state')).json()
         assert initial['today']==today() and initial['revision']==0 and initial['state']['sessions']=={}
         doc=initial['state']; d=today()
@@ -119,6 +122,12 @@ async def check():
         assert 'own_workout' not in reloaded['templates']
         assert reloaded['sessions'][previous]['plan']==custom
         assert reloaded['sessions'][future]['plan']['exercises'][0]['id']=='split_own'
+        reloaded['templates']['shared_workout']={'title':'Из общего каталога','place':'В зале','minutes':20,'exercises':[{'id':shared_id,'sets':2,'reps':'10','rest':60}]}
+        assert (await a.put('/sport/api/state',json={'revision':8,'state':reloaded})).status_code==200
+        common=(await a.get('/sport/api/state')).json()['state']
+        assert common['templates']['shared_workout']['exercises'][0]['id']==shared_id
+        assert shared_id not in common['exercises']
+        assert len(common['exercises'])==1  # The personal exercise remains separate and intact.
     await delete_user(owner.id)
     async with async_session() as db:
         assert await db.get(SportWorkspace,owner.id) is None

@@ -11,6 +11,8 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.services.sport_catalog import SHARED_EXERCISE_IDS
+
 EXERCISES = {"press", "front", "rdl", "curl", "calf", "squat", "bridge", "bench", "row"}
 TEMPLATES = {"lower": ["front", "press", "rdl", "curl", "calf"],
              "upper": ["bench", "row"], "home": ["squat", "bridge"]}
@@ -253,9 +255,9 @@ class Snapshot(StrictModel):
             raise ValueError("Deleted workouts cannot remain in the library")
         active = (set(TEMPLATES) - archived) | set(self.templates)
         known = active | archived
-        if set(self.exercises) & EXERCISES:
+        if set(self.exercises) & (EXERCISES | SHARED_EXERCISE_IDS):
             raise ValueError("Built-in exercises cannot be overwritten")
-        exercise_ids = EXERCISES | set(self.exercises)
+        exercise_ids = EXERCISES | SHARED_EXERCISE_IDS | set(self.exercises)
 
         def check_plan(plan):
             if plan and any(e.id not in exercise_ids for e in plan.exercises):

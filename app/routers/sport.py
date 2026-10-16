@@ -17,6 +17,7 @@ from app.auth import get_current_user, has_service_access
 from app.database import SportWorkspace, async_session, utcnow
 from app.services.sport import SportState, SportUpdate, empty_workspace, refresh_future_workouts, today, upgrade_workspace
 from app.services.sport_lookup import ExerciseImport, import_exercise
+from app.services.sport_catalog import SHARED_EXERCISES
 
 router = APIRouter(tags=["sport"])
 templates = Jinja2Templates(directory=Path(__file__).resolve().parents[1] / "templates")
@@ -57,6 +58,7 @@ async def index(request: Request):
     if not await has_service_access(user.id, "sport"):
         return RedirectResponse("/", status_code=302)
     boot = await snapshot(user.id)
+    boot["catalog"] = SHARED_EXERCISES
     boot["user"] = {"id": user.id, "name": user.name or user.email}
     return templates.TemplateResponse(request=request, name="sport/index.html", context={"boot": boot})
 
