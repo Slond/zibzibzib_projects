@@ -12,7 +12,7 @@ from sqlalchemy.dialects.sqlite import insert
 
 from app.auth import get_current_user, has_service_access
 from app.database import SportWorkspace, async_session, utcnow
-from app.services.sport import SportUpdate, empty_workspace, today
+from app.services.sport import SportUpdate, empty_workspace, today, upgrade_workspace
 
 router = APIRouter(tags=["sport"])
 templates = Jinja2Templates(directory=Path(__file__).resolve().parents[1] / "templates")
@@ -37,7 +37,7 @@ async def snapshot(user_id):
     async with async_session() as session:
         await ensure_workspace(session, user_id)
         row = await session.get(SportWorkspace, user_id)
-        result = {"state": json.loads(row.document), "revision": row.revision,
+        result = {"state": upgrade_workspace(json.loads(row.document)), "revision": row.revision,
                   "today": today(), "timezone": "Asia/Almaty"}
         await session.commit()
         return result
@@ -78,7 +78,7 @@ async def put_state(request: Request):
         await ensure_workspace(session, user.id)
         result = await session.execute(update(SportWorkspace).where(
             SportWorkspace.user_id == user.id, SportWorkspace.revision == payload.revision,
-        ).values(document=payload.state.model_dump_json(exclude_none=True),
+        ).values(document=json.dumps(upgrade_workspace(payload.state.model_dump(exclude_none=True)), ensure_ascii=False),
                  revision=payload.revision + 1, updated_at=utcnow()))
         if result.rowcount != 1:
             raise HTTPException(409, "Журнал изменён в другой вкладке. Скачайте черновик и обновите страницу.")

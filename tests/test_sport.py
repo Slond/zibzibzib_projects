@@ -73,6 +73,26 @@ async def check():
         await reject(lambda v:v.update(user_id=other.id))
         assert (await a.put('/sport/api/state',content=b'x'*(4*1024*1024+1),headers={'content-type':'application/json'})).status_code==413
         assert (await a.get('/sport/api/state')).json()['revision']==2
+        custom={'title':'Дом и спина <script>example</script>','place':'Дома','minutes':25,'desc':'Своя тренировка','exercises':[{'id':'bridge','sets':1,'reps':'12–15','rest':45,'note':'Пауза'},{'id':'row','sets':2,'reps':'10','rest':60,'note':''}]}
+        doc['templates']['own_workout']=copy.deepcopy(custom)
+        previous=(date.fromisoformat(d)-timedelta(days=1)).isoformat()
+        doc['sessions'][previous]={'template':'own_workout','originalTemplate':'own_workout','plan':copy.deepcopy(custom),'originalPlan':copy.deepcopy(custom),'status':'done','duration':25,'sets':{'bridge':[{'weight':'0','reps':'15','done':True}],'row':[{'weight':'10','reps':'10','done':True},{'weight':'10','reps':'10','done':True}]}}
+        assert (await a.put('/sport/api/state',json={'revision':2,'state':doc})).status_code==200
+        assert 'own_workout' not in (await b.get('/sport/api/state')).json()['state']['templates']
+        doc=(await a.get('/sport/api/state')).json()['state']
+        doc['templates']['own_workout']['title']='Новая версия'
+        doc['templates']['own_workout']['exercises']=[{'id':'squat','sets':4,'reps':'8–10','rest':90}]
+        assert (await a.put('/sport/api/state',json={'revision':3,'state':doc})).status_code==200
+        latest=(await a.get('/sport/api/state')).json()['state']
+        assert latest['sessions'][previous]['plan']==custom
+        assert latest['sessions'][previous]['sets']['bridge'][0]['reps']=='15'
+        assert latest['templates']['own_workout']['exercises'][0]['sets']==4
+        bad=copy.deepcopy(latest);bad['sessions'][previous]['sets']['row'].pop()
+        assert (await a.put('/sport/api/state',json={'revision':4,'state':bad})).status_code==422
+        bad=copy.deepcopy(latest);bad['templates']['own_workout']['exercises'][0]['reps']='15–8'
+        assert (await a.put('/sport/api/state',json={'revision':4,'state':bad})).status_code==422
+        latest['preferences'].update(days=[0],week={'0':'own_workout'},scheduleStart=d,scheduleEnd=(date.fromisoformat(d)+timedelta(days=27)).isoformat())
+        assert (await a.put('/sport/api/state',json={'revision':4,'state':latest})).status_code==200
     await delete_user(owner.id)
     async with async_session() as db:
         assert await db.get(SportWorkspace,owner.id) is None
@@ -107,3 +127,21 @@ def test_sport_migration_preserves_workspaces(tmp_path):
         assert db.execute("SELECT COUNT(*) FROM sport_workspaces").fetchone()==(0,)
         assert db.execute("PRAGMA integrity_check").fetchall()==[("ok",)]
         assert db.execute("PRAGMA foreign_key_check").fetchall()==[]
+
+
+def test_legacy_program_upgrades_without_rewriting_workouts():
+    import copy
+    from app.services.sport import SportState, upgrade_workspace
+
+    legacy = {"version": 1, "preferences": {"goal": "Своя цель", "time": "13:00", "days": [1, 2, 3, 4, 5, 6]},
+              "sessions": {"2026-10-01": {"template": "lower", "originalTemplate": "lower", "status": "planned", "sets": {}, "customIds": ["squat", "rdl"]}}, "events": [], "undo": None}
+    before = copy.deepcopy(legacy)
+    upgraded = upgrade_workspace(legacy)
+    assert legacy == before
+    assert upgraded["preferences"]["time"] == "13:00"
+    assert upgraded["preferences"]["week"] == {"1": "upper", "2": "lower", "3": "lower", "4": "lower", "5": "lower", "6": "lower"}
+    assert [e["id"] for e in upgraded["sessions"]["2026-10-01"]["plan"]["exercises"]] == ["squat", "rdl"]
+    upgraded["templates"]["lower"]["exercises"].pop()
+    assert len(upgraded["sessions"]["2026-10-01"]["originalPlan"]["exercises"]) == 5
+    assert upgrade_workspace(upgraded) == upgraded
+    assert SportState.model_validate(upgraded).sessions["2026-10-01"].template == "lower"
