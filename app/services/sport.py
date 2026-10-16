@@ -6,6 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 import re
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -13,8 +14,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 EXERCISES = {"press", "front", "rdl", "curl", "calf", "squat", "bridge", "bench", "row"}
 TEMPLATES = {"lower": ["front", "press", "rdl", "curl", "calf"],
              "upper": ["bench", "row"], "home": ["squat", "bridge"]}
-ExerciseID = Literal["press", "front", "rdl", "curl", "calf", "squat", "bridge", "bench", "row"]
 TemplateID = Annotated[str, Field(min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$")]
+ExerciseID = TemplateID
 ZONE = ZoneInfo("Asia/Almaty")
 
 
@@ -83,12 +84,44 @@ class ExercisePlan(StrictModel):
         return value
 
 
+class ExerciseDefinition(StrictModel):
+    name: str = Field(min_length=1, max_length=120)
+    en: str = Field(default="", max_length=120)
+    muscle: str = Field(min_length=1, max_length=80)
+    equipment: str = Field(min_length=1, max_length=80)
+    instructions: str = Field(default="", max_length=4000)
+    sourceUrl: str = Field(default="", max_length=2000)
+    videoUrl: str = Field(default="", max_length=2000)
+    imageUrl: str = Field(default="", max_length=2000)
+    attribution: str = Field(default="", max_length=1000)
+    licenseUrl: str = Field(default="", max_length=2000)
+    bodyweight: bool = False
+
+    @field_validator("name", "muscle", "equipment")
+    @classmethod
+    def nonblank(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Cannot be blank")
+        return value
+
+    @field_validator("sourceUrl", "videoUrl", "imageUrl", "licenseUrl")
+    @classmethod
+    def web_link(cls, value):
+        value = value.strip()
+        if value:
+            parts = urlsplit(value)
+            if parts.scheme not in {"https", "http"} or not parts.hostname or parts.username or parts.password or any(ord(c) < 33 for c in value):
+                raise ValueError("Use a public HTTP or HTTPS link")
+        return value
+
+
 class WorkoutPlan(StrictModel):
     title: str = Field(min_length=1, max_length=100)
     place: str = Field(default="В зале", min_length=1, max_length=80)
     minutes: int = Field(default=45, ge=1, le=600)
     desc: str = Field(default="", max_length=2000)
-    exercises: list[ExercisePlan] = Field(min_length=1, max_length=9)
+    exercises: list[ExercisePlan] = Field(min_length=1, max_length=50)
 
     @field_validator("title", "place")
     @classmethod
@@ -113,7 +146,7 @@ class TrainingSession(StrictModel):
     sets: dict[ExerciseID, Annotated[list[WorkoutSet], Field(min_length=1, max_length=12)]] = Field(default_factory=dict)
     plan: WorkoutPlan | None = None
     originalPlan: WorkoutPlan | None = None
-    customIds: list[ExerciseID] | None = Field(default=None, min_length=1, max_length=9)
+    customIds: list[ExerciseID] | None = Field(default=None, min_length=1, max_length=50)
     note: str = Field(default="", max_length=3000)
     feel: Literal["good", "tired", "low"] = "good"
     revisions: list[Annotated[str, Field(max_length=1000)]] = Field(default_factory=list, max_length=500)
@@ -205,6 +238,8 @@ class ChangeEvent(StrictModel):
 
 class Snapshot(StrictModel):
     version: Literal[1] = 1
+    exercises: dict[ExerciseID, ExerciseDefinition] = Field(default_factory=dict, max_length=500)
+    deletedTemplates: list[TemplateID] = Field(default_factory=list, max_length=1000)
     templates: dict[TemplateID, WorkoutPlan] = Field(default_factory=dict, max_length=100)
     sessions: dict[Day, TrainingSession] = Field(default_factory=dict, max_length=3000)
     events: list[ChangeEvent] = Field(default_factory=list, max_length=2000)
@@ -213,12 +248,32 @@ class Snapshot(StrictModel):
 
     @model_validator(mode="after")
     def session_dates(self):
-        known = set(TEMPLATES) | set(self.templates)
-        if self.preferences.week and any(key not in known for key in self.preferences.week.values()):
+        archived = set(self.deletedTemplates)
+        if archived & set(self.templates) or len(archived) != len(self.deletedTemplates):
+            raise ValueError("Deleted workouts cannot remain in the library")
+        active = (set(TEMPLATES) - archived) | set(self.templates)
+        known = active | archived
+        if set(self.exercises) & EXERCISES:
+            raise ValueError("Built-in exercises cannot be overwritten")
+        exercise_ids = EXERCISES | set(self.exercises)
+
+        def check_plan(plan):
+            if plan and any(e.id not in exercise_ids for e in plan.exercises):
+                raise ValueError("Plan references an unknown exercise")
+
+        for plan in self.templates.values():
+            check_plan(plan)
+        if self.preferences.week and any(key not in active for key in self.preferences.week.values()):
             raise ValueError("Schedule references an unknown workout")
         for key, session in self.sessions.items():
             if session.template not in known or session.originalTemplate not in known:
                 raise ValueError("Session references an unknown workout")
+            if session.template in archived and not session.plan or session.originalTemplate in archived and not session.originalPlan:
+                raise ValueError("Deleted workouts require historical snapshots")
+            check_plan(session.plan)
+            check_plan(session.originalPlan)
+            if (set(session.sets) | set(session.customIds or [])) - exercise_ids:
+                raise ValueError("Session references an unknown exercise")
             valid_day(key)
             if key > today() and session.status in {"started", "done", "partial", "skipped"}:
                 raise ValueError("Cannot record a future workout result")
@@ -262,7 +317,7 @@ DEFAULT_DESCRIPTIONS = {
 
 
 def default_exercise(exercise_id):
-    sets, reps, rest = EXERCISE_DEFAULTS[exercise_id]
+    sets, reps, rest = EXERCISE_DEFAULTS.get(exercise_id, (3, "10–12", 90))
     return {"id": exercise_id, "sets": sets, "reps": reps, "rest": rest, "note": ""}
 
 
@@ -279,7 +334,11 @@ def upgrade_workspace(document):
     alter previous prescriptions or results. Undo keeps its own historical copy.
     """
     result = deepcopy(document)
-    result["templates"] = {**default_templates(), **result.get("templates", {})}
+    result.setdefault("exercises", {})
+    result.setdefault("deletedTemplates", [])
+    result["templates"] = {key: value for key, value in
+                           {**default_templates(), **result.get("templates", {})}.items()
+                           if key not in result["deletedTemplates"]}
     preferences = result["preferences"]
     if preferences.get("week") is None:
         preferences["week"] = {str(day): "upper" if day == 1 else "lower"
@@ -295,4 +354,27 @@ def upgrade_workspace(document):
             session["originalPlan"] = deepcopy(original)
     if result.get("undo"):
         result["undo"]["snapshot"] = upgrade_workspace(result["undo"]["snapshot"])
+    return result
+
+
+def refresh_future_workouts(previous, document, current_day=None):
+    """Apply edited prescriptions to upcoming, untouched sessions, including manual bookings.
+
+    Calendar-day boundaries follow the account's existing Almaty timezone. Historical
+    originalPlan snapshots, notes and dates stay intact; entered results are never reset.
+    """
+    result = deepcopy(document)
+    changed = {key for key, plan in result["templates"].items()
+               if key in previous["templates"] and plan != previous["templates"][key]}
+    for day, session in result["sessions"].items():
+        if day <= (current_day or today()) or session["template"] not in changed:
+            continue
+        if session["status"] != "planned" or session.get("startedAt") is not None:
+            continue
+        if any(s.get("done") or s.get("weight") or s.get("reps")
+               for sets in session["sets"].values() for s in sets):
+            continue
+        session["plan"] = deepcopy(result["templates"][session["template"]])
+        session["sets"] = {}
+        session.pop("customIds", None)
     return result

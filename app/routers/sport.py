@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import json
+from collections import OrderedDict
 from pathlib import Path
+from time import monotonic
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -12,10 +15,12 @@ from sqlalchemy.dialects.sqlite import insert
 
 from app.auth import get_current_user, has_service_access
 from app.database import SportWorkspace, async_session, utcnow
-from app.services.sport import SportUpdate, empty_workspace, today, upgrade_workspace
+from app.services.sport import SportState, SportUpdate, empty_workspace, refresh_future_workouts, today, upgrade_workspace
+from app.services.sport_lookup import ExerciseImport, import_exercise
 
 router = APIRouter(tags=["sport"])
 templates = Jinja2Templates(directory=Path(__file__).resolve().parents[1] / "templates")
+lookup_limits = OrderedDict()
 
 
 async def require_user(request):
@@ -61,6 +66,34 @@ async def get_state(request: Request):
     return await snapshot((await require_user(request)).id)
 
 
+@router.post("/sport/api/exercises/import")
+async def import_exercise_card(request: Request):
+    user = await require_user(request)
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > 8192:
+            raise HTTPException(413, "Слишком длинное название или ссылка")
+    try:
+        payload = ExerciseImport.model_validate_json(body)
+    except ValueError:
+        raise HTTPException(422, "Введите название и ссылку на упражнение") from None
+    now = monotonic()
+    calls = [at for at in lookup_limits.get(user.id, []) if now - at < 60]
+    if len(calls) >= 20:
+        raise HTTPException(429, "Слишком много загрузок. Подождите минуту.")
+    lookup_limits[user.id] = [*calls, now]
+    lookup_limits.move_to_end(user.id)
+    while len(lookup_limits) > 1000:
+        lookup_limits.popitem(last=False)
+    try:
+        return {"exercise": await import_exercise(payload.name, payload.url)}
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from None
+    except httpx.HTTPError:
+        raise HTTPException(502, "Источник временно недоступен. Ссылка сохранится; заполните карточку вручную.") from None
+
+
 @router.put("/sport/api/state")
 async def put_state(request: Request):
     user = await require_user(request)
@@ -76,9 +109,15 @@ async def put_state(request: Request):
     async with async_session() as session:
         await session.execute(text("BEGIN IMMEDIATE"))
         await ensure_workspace(session, user.id)
+        row = await session.get(SportWorkspace, user.id)
+        if row.revision != payload.revision:
+            raise HTTPException(409, "Журнал изменён в другой вкладке. Скачайте черновик и обновите страницу.")
+        document = refresh_future_workouts(upgrade_workspace(json.loads(row.document)),
+                                          upgrade_workspace(payload.state.model_dump(exclude_none=True)))
+        SportState.model_validate(document)
         result = await session.execute(update(SportWorkspace).where(
             SportWorkspace.user_id == user.id, SportWorkspace.revision == payload.revision,
-        ).values(document=json.dumps(upgrade_workspace(payload.state.model_dump(exclude_none=True)), ensure_ascii=False),
+        ).values(document=json.dumps(document, ensure_ascii=False),
                  revision=payload.revision + 1, updated_at=utcnow()))
         if result.rowcount != 1:
             raise HTTPException(409, "Журнал изменён в другой вкладке. Скачайте черновик и обновите страницу.")

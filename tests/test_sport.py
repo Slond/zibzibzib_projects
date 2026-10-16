@@ -93,6 +93,32 @@ async def check():
         assert (await a.put('/sport/api/state',json={'revision':4,'state':bad})).status_code==422
         latest['preferences'].update(days=[0],week={'0':'own_workout'},scheduleStart=d,scheduleEnd=(date.fromisoformat(d)+timedelta(days=27)).isoformat())
         assert (await a.put('/sport/api/state',json={'revision':4,'state':latest})).status_code==200
+        assert (await a.post('/sport/api/exercises/import',json={'name':'Тест','url':'file:///etc/passwd'})).status_code==422
+        assert (await a.post('/sport/api/exercises/import',json={'name':'Тест','url':'https://evil.test/exercises/squat'})).status_code==422
+        assert (await no.post('/sport/api/exercises/import',json={'name':'Тест','url':'https://evil.test/exercises/squat'})).status_code==403
+        latest=(await a.get('/sport/api/state')).json()['state']
+        latest['exercises']['split_own']={'name':'Болгарские выпады','muscle':'Ноги','equipment':'Гантели','instructions':'Своя инструкция','videoUrl':'https://www.youtube.com/watch?v=abcdefghijk'}
+        future=(date.fromisoformat(d)+timedelta(days=2)).isoformat()
+        oldplan=copy.deepcopy(latest['templates']['own_workout'])
+        latest['sessions'][future]={'template':'own_workout','originalTemplate':'own_workout','plan':copy.deepcopy(oldplan),'originalPlan':copy.deepcopy(oldplan),'status':'planned','sets':{},'manual':True,'note':'Сохрани меня'}
+        assert (await a.put('/sport/api/state',json={'revision':5,'state':latest})).status_code==200
+        latest=(await a.get('/sport/api/state')).json()['state']
+        assert latest['exercises']['split_own']['name']=='Болгарские выпады'
+        assert not (await b.get('/sport/api/state')).json()['state']['exercises']
+        latest['templates']['own_workout']['exercises']=[{'id':'split_own','sets':2,'reps':'10','rest':60}]
+        assert (await a.put('/sport/api/state',json={'revision':6,'state':latest})).status_code==200
+        latest=(await a.get('/sport/api/state')).json()['state']
+        assert latest['sessions'][future]['plan']['exercises'][0]['id']=='split_own'
+        assert latest['sessions'][future]['originalPlan']==oldplan
+        assert latest['sessions'][future]['note']=='Сохрани меня'
+        assert latest['sessions'][previous]['plan']==custom
+        del latest['templates']['own_workout']; latest['deletedTemplates'].append('own_workout')
+        latest['preferences'].update(days=[],week={})
+        assert (await a.put('/sport/api/state',json={'revision':7,'state':latest})).status_code==200
+        reloaded=(await a.get('/sport/api/state')).json()['state']
+        assert 'own_workout' not in reloaded['templates']
+        assert reloaded['sessions'][previous]['plan']==custom
+        assert reloaded['sessions'][future]['plan']['exercises'][0]['id']=='split_own'
     await delete_user(owner.id)
     async with async_session() as db:
         assert await db.get(SportWorkspace,owner.id) is None
@@ -145,3 +171,91 @@ def test_legacy_program_upgrades_without_rewriting_workouts():
     assert len(upgraded["sessions"]["2026-10-01"]["originalPlan"]["exercises"]) == 5
     assert upgrade_workspace(upgraded) == upgraded
     assert SportState.model_validate(upgraded).sessions["2026-10-01"].template == "lower"
+
+
+def test_exercise_catalog_and_future_template_changes():
+    import copy
+    import pytest
+    from app.services.sport import SportState, empty_workspace, refresh_future_workouts, upgrade_workspace
+
+    original = empty_workspace()
+    custom = {'name': 'Болгарские выпады <b>тест</b>', 'muscle': 'Ноги', 'equipment': 'Гантели',
+              'instructions': 'Свой текст', 'sourceUrl': 'https://www.muscleandstrength.com/exercises/example.html'}
+    original['exercises']['own_split'] = custom
+    plan = copy.deepcopy(original['templates']['lower'])
+    for day in ['2026-10-16', '2026-10-17', '2026-10-18', '2026-10-19', '2026-10-20', '2026-10-21']:
+        original['sessions'][day] = {'template': 'lower', 'originalTemplate': 'lower', 'status': 'planned',
+                                     'plan': copy.deepcopy(plan), 'originalPlan': copy.deepcopy(plan),
+                                     'sets': {}, 'manual': True, 'note': 'Сохранить заметку'}
+    original['sessions']['2026-10-19']['startedAt'] = 123
+    original['sessions']['2026-10-20']['sets']['front'] = [dict(weight='10', reps='', done=False)] + [dict(weight='', reps='', done=False) for _ in range(2)]
+    original['sessions']['2026-10-21'].update(status='moved', movedTo='2026-10-22')
+    updated = copy.deepcopy(original)
+    updated['templates']['lower']['exercises'] = [{'id': 'own_split', 'sets': 2, 'reps': '8–10', 'rest': 60}]
+    result = refresh_future_workouts(original, updated, '2026-10-17')
+    assert result['sessions']['2026-10-18']['plan'] == updated['templates']['lower']
+    assert result['sessions']['2026-10-18']['originalPlan'] == plan
+    assert result['sessions']['2026-10-18']['note'] == 'Сохранить заметку'
+    for day in ['2026-10-16', '2026-10-17', '2026-10-19', '2026-10-20', '2026-10-21']:
+        assert result['sessions'][day] == original['sessions'][day]
+    assert updated['sessions']['2026-10-18']['plan'] == plan  # Pure transformation.
+    SportState.model_validate(result)
+    for change in [lambda v:v['exercises']['own_split'].update(sourceUrl='javascript:alert(1)'),
+                   lambda v:v['exercises'].update(press=custom),
+                   lambda v:v['templates']['lower']['exercises'][0].update(id='nonexistent')]:
+        bad = copy.deepcopy(result); change(bad)
+        with pytest.raises(ValueError):
+            SportState.model_validate(bad)
+    del result['templates']['lower']
+    result['deletedTemplates'].append('lower')
+    result['preferences'].update(days=[1], week={'1': 'upper'})
+    assert 'lower' not in upgrade_workspace(result)['templates']
+    assert upgrade_workspace(upgrade_workspace(result)) == upgrade_workspace(result)
+    SportState.model_validate(result)
+    assert result['sessions']['2026-10-18']['plan']['exercises'][0]['id'] == 'own_split'
+
+
+def test_muscle_strength_import_is_bounded_and_rejects_arbitrary_hosts():
+    import asyncio
+    import httpx
+    import pytest
+    from app.services.sport_lookup import exercise_url, import_exercise, parse_exercise
+
+    url = 'https://www.muscleandstrength.com/exercises/example-squat.html'
+    html = '''<html><head><meta property="og:image" content="https://www.muscleandstrength.com/images/squat.jpg"></head><body>
+    <h1>Example Squat Video Exercise Guide</h1><iframe data-src="https://www.youtube.com/embed/abcdefghijk"></iframe>
+    <ul><li>Target Muscle Group <a>Quads</a></li><li>Exercise Type Strength</li><li>Equipment Required Dumbbell</li><li>Mechanics Compound</li></ul>
+    <h2>Example Squat Instructions</h2><ol><li>First step <script>alert('x')</script></li><li>Second step</li></ol>
+    <h2>Example Squat Tips</h2><ul><li>Not an instruction</li></ul></body></html>'''
+    definition = parse_exercise(html, 'Моё название', url)
+    assert definition['name'] == 'Моё название' and definition['en'] == 'Example Squat'
+    assert definition['muscle'] == 'Квадрицепсы' and definition['equipment'] == 'Гантели'
+    assert definition['instructions'] == 'First step\nSecond step'
+    assert definition['videoUrl'] == 'https://www.youtube.com/embed/abcdefghijk'
+    for bad in ['http://www.muscleandstrength.com/exercises/squat', 'https://evil.test/exercises/squat',
+                'https://www.muscleandstrength.com.evil.test/exercises/squat',
+                'https://www.muscleandstrength.com@127.0.0.1/exercises/squat',
+                'https://www.muscleandstrength.com:8443/exercises/squat',
+                'https://www.muscleandstrength.com/exercises/../../admin',
+                'https://www.muscleandstrength.com/exercises/squat?redirect=http://127.0.0.1']:
+        with pytest.raises(ValueError):
+            exercise_url(bad)
+    async def check():
+        hits = []
+        def reply(request):
+            hits.append(str(request.url));return httpx.Response(200, text=html)
+        actual = await import_exercise('Моё название', url, transport=httpx.MockTransport(reply))
+        assert actual == definition and hits == [url]
+        with pytest.raises(ValueError, match='заблокировал'):
+            await import_exercise('Тест', url, transport=httpx.MockTransport(lambda r:httpx.Response(403)))
+        redirects = []
+        def redirect(request):
+            redirects.append(str(request.url));return httpx.Response(302, headers={'location':'http://127.0.0.1/private'})
+        with pytest.raises(ValueError):
+            await import_exercise('Тест', url, transport=httpx.MockTransport(redirect))
+        assert redirects == [url]  # Never request a redirect outside the allowlist.
+        with pytest.raises(ValueError, match='слишком большая'):
+            await import_exercise('Тест', url, transport=httpx.MockTransport(lambda r:httpx.Response(200, content=b'x'*(2*1024*1024+1))))
+        with pytest.raises(ValueError):
+            await import_exercise('Тест', url, transport=httpx.MockTransport(lambda r:httpx.Response(200, text='<h1>Just a moment...</h1>')))
+    asyncio.run(check())
