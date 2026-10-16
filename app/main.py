@@ -31,7 +31,7 @@ from app.services.scheduler import poll_yandex_devices, process_recurring_transa
 from app.services.activity import purge_activity_history
 from app.services.awg.runtime import poll_traffic
 from app.services.currency import CurrencyRateUnavailable
-from app.routers import dashboard, finance, weather, activity, vpn, jobs
+from app.routers import dashboard, finance, weather, activity, vpn, jobs, sport
 
 logging.basicConfig(
     level=logging.INFO,
@@ -172,6 +172,7 @@ app.include_router(weather.router)
 app.include_router(activity.router)
 app.include_router(vpn.router)
 app.include_router(jobs.router)
+app.include_router(sport.router)
 
 
 # ============ Shared Auth Routes ============

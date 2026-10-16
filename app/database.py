@@ -16,7 +16,6 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
-    text,
     event,
 )
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -465,6 +464,18 @@ class JobSearchFile(Base):
     is_primary = Column(Boolean, nullable=False, default=False)
     share_token = Column(String(80), unique=True, nullable=True)
     created_at = Column(DateTime, nullable=False, default=utcnow)
+
+
+# ============================================
+# Personal training journal, versioned independently for each account.
+# ============================================
+
+class SportWorkspace(Base):
+    __tablename__ = "sport_workspaces"
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    revision = Column(Integer, nullable=False, default=0)
+    document = Column(Text, nullable=False)
+    updated_at = Column(DateTime, nullable=False, default=utcnow)
 
 
 # ============================================

@@ -43,3 +43,6 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local visual verification artifacts
+prototypes/sport/screenshots/
