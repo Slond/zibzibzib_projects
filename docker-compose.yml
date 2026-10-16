@@ -4,7 +4,7 @@ services:
     container_name: main-project
     restart: unless-stopped
     ports:
-      - "8199:8199"
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${APP_PORT:-8199}:8199"
     environment:
       - SECRET_KEY=${SECRET_KEY}
       - DATABASE_URL=sqlite+aiosqlite:///./data/main-project.db

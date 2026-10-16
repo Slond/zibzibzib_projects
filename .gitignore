@@ -14,6 +14,21 @@ venv/
 .venv/
 env/
 .env
+.env.*
+!.env.example
+secrets/
+private/
+infra.local/
+*.bundle
+*.pem
+*.key
+*.p12
+*.pfx
+# Personal deployment material belongs in a separate private repository.
+/docs/hetzner-migration*.md
+/scripts/backup-server.py
+/scripts/zibzibzib-backup.service
+/scripts/zibzibzib-backup.timer
 *.egg-info/
 dist/
 build/
