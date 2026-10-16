@@ -42,6 +42,21 @@ async def check():
         file=(await a.post('/jobs/api/files?name=CV%20%D0%A0%D0%A3.pdf',content=raw)).json();fid=file['id']
         second=(await a.post('/jobs/api/files?name=letter.docx',content=b'PK-docx-test')).json()
         assert file['primary'] and not file['shared']
+        assert file['comment']=='' and second['comment']==''
+        private_comment='Версия для Python\nНе отправлять без проверки <script>alert(1)</script>'
+        comment_path=f'/jobs/api/files/{fid}/comment'
+        assert (await anon.patch(comment_path,json={'comment':'foreign'})).status_code==401
+        assert (await no.patch(comment_path,json={'comment':'foreign'})).status_code==403
+        assert (await b.patch(comment_path,json={'comment':'foreign'})).status_code==404
+        assert (await a.patch(comment_path,json={'comment':'x'},headers={'x-csrf-token':''})).status_code==403
+        edited=await a.patch(comment_path,json={'comment':'  '+private_comment+'  '})
+        assert edited.status_code==200 and edited.json()['comment']==private_comment
+        assert (await a.patch(comment_path,json={'comment':'x'*6001})).status_code==422
+        assert (await a.patch(comment_path,json={'comment':None})).status_code==422
+        assert (await a.patch(comment_path,json={'comment':'x','name':'renamed.pdf'})).status_code==422
+        assert (await a.patch(comment_path,content=b'x'*40961)).status_code==413
+        assert next(f for f in (await a.get('/jobs/api/state')).json()['state']['files'] if f['id']==fid)['comment']==private_comment
+        assert (await b.get('/jobs/api/state')).json()['state']['files']==[]
         dl=await a.get(f'/jobs/api/files/{fid}/download');assert dl.content==raw
         assert 'attachment' in dl.headers['content-disposition'] and '.pdf' in dl.headers['content-disposition']
         assert dl.headers['cache-control']=='private, no-store' and dl.headers['content-security-policy'].startswith('sandbox')
@@ -68,6 +83,11 @@ async def check():
         shared=(await a.post(f'/jobs/api/files/{fid}/share')).json();url=shared['share_url']
         assert (await a.post(f'/jobs/api/files/{fid}/share')).json()['share_url']==url
         assert (await anon.get(url)).content==raw
+        assert private_comment.encode() not in (await anon.get(url)).content
+        assert next(f for f in (await a.get('/jobs/api/state')).json()['state']['files'] if f['id']==fid)['comment']==private_comment
+        cleared=await a.patch(comment_path,json={'comment':'  \n  '})
+        assert cleared.status_code==200 and cleared.json()['comment']==''
+        assert (await anon.get(url)).content==raw
         assert redact_tokens(url)=='/jobs/shared/[redacted]'
         assert (await a.delete(f'/jobs/api/files/{fid}/share')).status_code==200
         assert (await anon.get(url)).status_code==404
@@ -91,3 +111,32 @@ asyncio.run(check())
            "OPENEXCHANGERATES_APP_ID": "", "AWG_DB": str(tmp_path / "awg.db"), "ACTIVITY_DIR": str(tmp_path / "activity")}
     result = subprocess.run([sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[1], env=env, text=True, capture_output=True)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_file_comment_migration_preserves_existing_files(tmp_path):
+    import sqlite3
+
+    database = tmp_path / 'upgrade.db'
+    env = {**os.environ, 'DATABASE_URL': f'sqlite+aiosqlite:///{database}'}
+    def upgrade(revision):
+        result = subprocess.run([sys.executable, '-m', 'alembic', 'upgrade', revision],
+                                env=env, text=True, capture_output=True)
+        assert result.returncode == 0, result.stdout + result.stderr
+    upgrade('004_job_search')
+    original = b'%PDF-1.4\nexisting file\x00\xff'
+    with sqlite3.connect(database) as db:
+        # Reproduce the deployed 004 table, before the model gained a comment.
+        db.execute('DROP TABLE job_search_files')
+        db.execute('''CREATE TABLE job_search_files (
+            id VARCHAR(80) PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id),
+            name VARCHAR(255) NOT NULL, media_type VARCHAR(100) NOT NULL,
+            size INTEGER NOT NULL, content BLOB NOT NULL, is_primary BOOLEAN NOT NULL,
+            share_token VARCHAR(80) UNIQUE, created_at DATETIME NOT NULL)''')
+        db.execute("INSERT INTO users(id,email,password_hash,session_key) VALUES(7,'upgrade@example.test','unused','migration-test')")
+        db.execute("INSERT INTO job_search_files VALUES('existing',7,'cv.pdf','application/pdf',?,?,1,'existing-share',CURRENT_TIMESTAMP)", (len(original), original))
+    upgrade('head')
+    upgrade('head')
+    with sqlite3.connect(database) as db:
+        assert db.execute('SELECT content,comment,is_primary,share_token FROM job_search_files').fetchone() == (original, '', 1, 'existing-share')
+        assert db.execute('PRAGMA integrity_check').fetchall() == [('ok',)]
+        assert db.execute('PRAGMA foreign_key_check').fetchall() == []

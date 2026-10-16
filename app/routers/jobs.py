@@ -18,7 +18,7 @@ from sqlalchemy.dialects.sqlite import insert
 
 from app.auth import get_current_user, has_service_access
 from app.database import JobSearchFile, JobSearchWorkspace, async_session, utcnow
-from app.services.job_search import WorkspaceUpdate, empty_workspace
+from app.services.job_search import FileCommentUpdate, WorkspaceUpdate, empty_workspace
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 templates = Jinja2Templates(directory=Path(__file__).resolve().parents[1] / "templates")
@@ -43,6 +43,7 @@ def file_view(row):
     return {"id": row.id, "name": row.name, "size": row.size, "type": row.media_type,
             "date": row.created_at.date().isoformat(), "primary": row.is_primary,
             "label": "Личный документ", "shared": bool(row.share_token),
+            "comment": row.comment,
             "share_url": f"/jobs/shared/{row.share_token}" if row.share_token else ""}
 
 
@@ -50,6 +51,7 @@ async def files_view(session, user_id):
     rows = (await session.execute(select(
         JobSearchFile.id, JobSearchFile.name, JobSearchFile.size, JobSearchFile.media_type,
         JobSearchFile.created_at, JobSearchFile.is_primary, JobSearchFile.share_token,
+        JobSearchFile.comment,
     ).where(JobSearchFile.user_id == user_id).order_by(JobSearchFile.created_at))).all()
     return [file_view(row) for row in rows]
 
@@ -179,6 +181,26 @@ async def make_primary(request: Request, file_id: str):
         row.is_primary = True
         await session.commit()
         return {"id": file_id}
+
+
+@router.patch("/api/files/{file_id}/comment")
+async def update_file_comment(request: Request, file_id: str):
+    user = await require_user(request)
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > 40 * 1024:
+            raise HTTPException(413, "Комментарий слишком большой")
+    try:
+        payload = FileCommentUpdate.model_validate_json(body)
+    except ValueError:
+        raise HTTPException(422, "Комментарий — текст до 6000 символов") from None
+    async with async_session() as session:
+        row = await owned_file(session, file_id, user.id)
+        row.comment = payload.comment.strip()
+        result = file_view(row)
+        await session.commit()
+    return result
 
 
 @router.post("/api/files/{file_id}/share")

@@ -461,6 +461,7 @@ class JobSearchFile(Base):
     media_type = Column(String(100), nullable=False)
     size = Column(Integer, nullable=False)
     content = Column(LargeBinary, nullable=False)
+    comment = Column(Text, nullable=False, default="", server_default="")
     is_primary = Column(Boolean, nullable=False, default=False)
     share_token = Column(String(80), unique=True, nullable=True)
     created_at = Column(DateTime, nullable=False, default=utcnow)

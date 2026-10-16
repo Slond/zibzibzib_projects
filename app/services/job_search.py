@@ -119,5 +119,9 @@ class WorkspaceUpdate(StrictModel):
     state: Workspace
 
 
+class FileCommentUpdate(StrictModel):
+    comment: str = Field(max_length=6000)
+
+
 def empty_workspace():
     return Workspace().model_dump(mode="json", exclude_none=True)
