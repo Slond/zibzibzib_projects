@@ -2,7 +2,7 @@
 import logging
 import re
 
-_TOKEN_PATH = re.compile(r'(/(?:activity/api/(?:config|ingest|location|client)|finance/api/webhook)/)[^/?\s]+')
+_TOKEN_PATH = re.compile(r'(/(?:activity/api/(?:config|ingest|location|client)|finance/api/webhook|jobs/shared)/)[^/?\s]+')
 
 
 def redact_tokens(value: str) -> str:

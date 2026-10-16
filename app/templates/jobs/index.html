@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#141819"><meta name="referrer" content="no-referrer"><title>Поиск работы — zibzibzib</title><link rel="stylesheet" href="/static/jobs/styles.css?v=1"><link rel="icon" href="/static/icon-192.png"></head><body>
+
+<div class="shell">
+  <aside class="sidebar">
+    <a href="/" class="brand"><span class="brand-mark">⌘</span> zibzibzib<span class="muted">.</span></a>
+    <div class="eyebrow">Поиск работы</div>
+    <nav class="nav" aria-label="Разделы поиска работы" id="navigation"></nav>
+    <div class="side-bottom">
+      <div class="demo-note"><b>Личный поиск работы</b>Отклики и документы сохраняются в аккаунте. Ссылки на файлы включаются отдельно.<a class="sidebar-back" href="/">← Все разделы сайта</a></div>
+      <div class="avatar-row"><div class="avatar">{{ boot.user.name[:2] | upper }}</div><div>{{ boot.user.name }}<small>Личное пространство</small></div></div>
+    </div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar"><div class="crumb"><a href="/" class="muted">Личный кабинет</a><span>/</span><b>Работа</b></div><div class="top-status"><i class="live-dot"></i><span id="save-status">Сохранено на сервере</span><span>· Алматы, UTC+5</span></div></header>
+    <div id="sync-warning" class="save-warning" role="status" hidden></div>
+    <main id="main"></main>
+  </div>
+</div>
+<dialog id="modal" aria-label="Форма"></dialog>
+<dialog id="drawer" class="drawer" aria-label="Карточка вакансии"></dialog>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<input type="file" id="upload" multiple hidden accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg">
+<script id="jobs-boot" type="application/json">{{ boot | tojson }}</script>
+<script src="/static/jobs/app.js?v=1" defer></script>
+</body></html>

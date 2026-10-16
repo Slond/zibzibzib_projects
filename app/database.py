@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -439,6 +440,31 @@ class ActivityDay(Base):
     next_run_at = Column(DateTime, nullable=True)
     attempts = Column(Integer, nullable=False, default=0)
     error = Column(String, nullable=True)
+
+# ============================================
+# Job search: per-user revisioned workspace and original document bytes.
+# ============================================
+
+class JobSearchWorkspace(Base):
+    __tablename__ = "job_search_workspaces"
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    revision = Column(Integer, nullable=False, default=0)
+    document = Column(Text, nullable=False)
+    updated_at = Column(DateTime, nullable=False, default=utcnow)
+
+
+class JobSearchFile(Base):
+    __tablename__ = "job_search_files"
+    id = Column(String(80), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    media_type = Column(String(100), nullable=False)
+    size = Column(Integer, nullable=False)
+    content = Column(LargeBinary, nullable=False)
+    is_primary = Column(Boolean, nullable=False, default=False)
+    share_token = Column(String(80), unique=True, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=utcnow)
+
 
 # ============================================
 # Database initialization
