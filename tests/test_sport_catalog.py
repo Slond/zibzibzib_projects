@@ -8,6 +8,7 @@ import pytest
 
 from app.services.sport import ExerciseDefinition, SportState, empty_workspace, upgrade_workspace
 from app.services.sport_catalog import SHARED_EXERCISES
+from app.services.sport_media import video_url
 from scripts.build_sport_catalog import LEGACY, build
 
 
@@ -18,6 +19,7 @@ def test_shared_catalog_is_translated_unique_and_preserves_legacy_ids():
         ExerciseDefinition.model_validate(record)
         assert re.search('[А-Яа-яЁё]', record['name'])
         assert record['en'] and record['sourceUrl'].startswith('https://www.muscleandstrength.com/exercises/')
+        assert record['videoUrl'] and video_url(record['videoUrl']) == record['videoUrl']
         assert record['sourceUrl'] not in urls
         urls.add(record['sourceUrl'])
         assert key == LEGACY.get(record['sourceUrl'].rsplit('/',1)[-1], key)
@@ -56,6 +58,12 @@ def test_builder_requires_complete_collection_and_all_translations():
     result = build(source, {'ms_test':'Фронтальный присед'})
     assert result['exercises']['front']['equipment'] == 'Штанга'
     assert result['exercises']['front']['muscle'] == 'Квадрицепсы'
+    videos = {'version':1, 'summary':{'complete':True, 'error':'', 'updated_at':'2026-10-17'},
+              'pages':{source['exercises'][0]['url']:{'videoUrl':'https://www.youtube.com/embed/9xAkoz95IFE'}}}
+    assert build(source, {'ms_test':'Фронтальный присед'}, videos)['exercises']['front']['videoUrl'].endswith('9xAkoz95IFE')
+    videos['summary']['complete'] = False
+    with pytest.raises(ValueError, match='video collection'):
+        build(source, {'ms_test':'Фронтальный присед'}, videos)
     with pytest.raises(ValueError, match='translation'):
         build(source, {})
     source['summary']['complete'] = False

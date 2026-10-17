@@ -9,6 +9,7 @@ import httpx
 from pydantic import Field
 
 from app.services.sport import ExerciseDefinition, StrictModel
+from app.services.sport_media import extract_video
 
 HOSTS = {"www.muscleandstrength.com", "muscleandstrength.com"}
 LABELS = {"Quads": "Квадрицепсы", "Hamstrings": "Задняя поверхность бедра", "Glutes": "Ягодицы",
@@ -35,6 +36,7 @@ def exercise_url(value):
 
 def parse_exercise(html, name, url):
     soup = BeautifulSoup(html, "html.parser")
+    video = extract_video(soup, url)
     for tag in soup(["script", "style", "noscript", "nav", "footer"]):
         tag.decompose()
     heading = soup.find("h1")
@@ -65,14 +67,6 @@ def parse_exercise(html, name, url):
             break
     if not muscle or not equipment:
         raise ValueError("Не удалось прочитать мышцы или оборудование. Заполните карточку вручную.")
-    video = ""
-    for frame in soup.find_all("iframe"):
-        candidate = frame.get("src") or frame.get("data-src") or ""
-        candidate = urljoin(url, candidate)
-        parts = urlsplit(candidate)
-        if parts.hostname in {"www.youtube.com", "www.youtube-nocookie.com", "youtube.com", "player.vimeo.com"}:
-            video = candidate
-            break
     image_tag = soup.find("meta", attrs={"property": "og:image"})
     image = urljoin(url, image_tag.get("content", "")) if image_tag else ""
     return ExerciseDefinition(name=name.strip(), en=english[:120],
