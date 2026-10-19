@@ -24,12 +24,24 @@ test('pounds convert to bounded, canonical kilograms, including fractional and z
 test('display switching never modifies confirmed canonical results', () => {
   const session = workout(), before = structuredClone(session);
   for (let n = 0; n < 100; n++) {
-    assert.equal(fromKg(session.sets.press[0].weight, 'lbs'), '100');
-    assert.equal(fromKg(session.sets.press[0].weight, 'kg'), '45.359237');
+    assert.equal(fromKg(session.sets.press[0].weight, 'lbs'), '100.0');
+    assert.equal(fromKg(session.sets.press[0].weight, 'kg'), '45.4');
   }
   assert.deepEqual(session, before);
   assert.equal(fromKg('', 'lbs'), '');
-  assert.equal(fromKg('0', 'lbs'), '0');
+  assert.equal(fromKg('0', 'lbs'), '0.0');
+});
+
+test('decimal entry accepts comma and dot, rounds to tenths and retains the unit while typing', () => {
+  for (const value of ['12.5', '12,5', ' 12,5 ']) assert.equal(toKg(value, 'kg'), '12.5');
+  assert.equal(toKg('12,56', 'kg'), '12.6');
+  assert.equal(toKg('2.55', 'kg'), '2.6');
+  assert.equal(toKg('1.05', 'kg'), '1.1');
+  assert.equal(toKg('12,', 'kg'), '12');
+  assert.equal(fromKg(toKg('12,56', 'kg'), 'kg'), '12.6');
+  assert.equal(fromKg(toKg('100,26', 'lbs'), 'lbs'), '100.3');
+  assert.equal(fromKg('2.55', 'kg'), '2.6');
+  assert.throws(() => toKg('12,3,4', 'kg'));
 });
 
 test('adding/removing sets changes this session and retains completed results and original plan', () => {

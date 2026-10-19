@@ -8,20 +8,23 @@
   const KG_PER_LB = 0.45359237;
   const MAX_KG = 2000;
   const validUnit = unit => unit === 'kg' || unit === 'lbs';
+  const tenth = value => Math.round((value + Number.EPSILON) * 10) / 10;
 
   function toKg(value, unit) {
     if (!validUnit(unit)) throw new Error('Unknown weight unit');
+    value = value.trim().replace(',', '.');
     if (value === '') return '';
     if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(value)) throw new Error('Invalid weight');
     const kg = Number(value) * (unit === 'lbs' ? KG_PER_LB : 1);
     if (!Number.isFinite(kg) || kg < 0 || kg > MAX_KG) throw new Error('Invalid weight');
-    return String(Number(kg.toFixed(6)));
+    // Round the entered unit, keeping conversion precision internally to avoid drift.
+    return String(Number((tenth(Number(value)) * (unit === 'lbs' ? KG_PER_LB : 1)).toFixed(6)));
   }
 
   function fromKg(value, unit) {
     if (!validUnit(unit)) throw new Error('Unknown weight unit');
     if (value === '') return '';
-    return unit === 'kg' ? value : String(Number((Number(value) / KG_PER_LB).toFixed(3)));
+    return tenth(Number(value) / (unit === 'lbs' ? KG_PER_LB : 1)).toFixed(1);
   }
 
   function resizeSets(session, id, delta) {
