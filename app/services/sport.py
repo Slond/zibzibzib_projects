@@ -146,6 +146,8 @@ class TrainingSession(StrictModel):
     originalTemplate: TemplateID
     status: Literal["planned", "started", "done", "partial", "skipped", "moved"] = "planned"
     sets: dict[ExerciseID, Annotated[list[WorkoutSet], Field(min_length=1, max_length=12)]] = Field(default_factory=dict)
+    # Display preference only: WorkoutSet.weight always contains kilograms.
+    weightUnits: dict[ExerciseID, Literal["kg", "lbs"]] = Field(default_factory=dict, max_length=50)
     plan: WorkoutPlan | None = None
     originalPlan: WorkoutPlan | None = None
     customIds: list[ExerciseID] | None = Field(default=None, min_length=1, max_length=50)
@@ -178,6 +180,8 @@ class TrainingSession(StrictModel):
             prescribed = dict.fromkeys(ids, 3)
         if any(len(sets) != prescribed[key] for key, sets in self.sets.items() if key in ids):
             raise ValueError("Set count must match the saved plan")
+        if set(self.weightUnits) - set(ids):
+            raise ValueError("Weight units must belong to the session exercises")
         expected = sum(prescribed.values())
         if len(ids) != len(set(ids)):
             raise ValueError("Duplicate exercises")
@@ -378,5 +382,6 @@ def refresh_future_workouts(previous, document, current_day=None):
             continue
         session["plan"] = deepcopy(result["templates"][session["template"]])
         session["sets"] = {}
+        session["weightUnits"] = {}
         session.pop("customIds", None)
     return result

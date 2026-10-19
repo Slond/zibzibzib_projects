@@ -103,7 +103,7 @@ async def check():
         latest['exercises']['split_own']={'name':'Болгарские выпады','muscle':'Ноги','equipment':'Гантели','instructions':'Своя инструкция','videoUrl':'https://www.youtube.com/watch?v=abcdefghijk'}
         future=(date.fromisoformat(d)+timedelta(days=2)).isoformat()
         oldplan=copy.deepcopy(latest['templates']['own_workout'])
-        latest['sessions'][future]={'template':'own_workout','originalTemplate':'own_workout','plan':copy.deepcopy(oldplan),'originalPlan':copy.deepcopy(oldplan),'status':'planned','sets':{},'manual':True,'note':'Сохрани меня'}
+        latest['sessions'][future]={'template':'own_workout','originalTemplate':'own_workout','plan':copy.deepcopy(oldplan),'originalPlan':copy.deepcopy(oldplan),'status':'planned','sets':{},'weightUnits':{'squat':'lbs'},'manual':True,'note':'Сохрани меня'}
         assert (await a.put('/sport/api/state',json={'revision':5,'state':latest})).status_code==200
         latest=(await a.get('/sport/api/state')).json()['state']
         assert latest['exercises']['split_own']['name']=='Болгарские выпады'
@@ -112,6 +112,7 @@ async def check():
         assert (await a.put('/sport/api/state',json={'revision':6,'state':latest})).status_code==200
         latest=(await a.get('/sport/api/state')).json()['state']
         assert latest['sessions'][future]['plan']['exercises'][0]['id']=='split_own'
+        assert latest['sessions'][future]['weightUnits']=={}
         assert latest['sessions'][future]['originalPlan']==oldplan
         assert latest['sessions'][future]['note']=='Сохрани меня'
         assert latest['sessions'][previous]['plan']==custom
@@ -128,6 +129,30 @@ async def check():
         assert common['templates']['shared_workout']['exercises'][0]['id']==shared_id
         assert shared_id not in common['exercises']
         assert len(common['exercises'])==1  # The personal exercise remains separate and intact.
+        # Session-specific set count and entry units survive a save/reload; weights stay kg.
+        training=common['sessions'][d]
+        original=copy.deepcopy(training['originalPlan'])
+        template=copy.deepcopy(common['templates']['home'])
+        training['status']='started'
+        training['plan']['exercises'][0]['sets']=4
+        training['sets']['squat'].append({'weight':'','reps':'','done':False})
+        training['sets']['squat'][1]={'weight':'45.359237','reps':'10','done':True}  # 100 lbs
+        training['weightUnits']={'squat':'lbs'}
+        assert (await a.put('/sport/api/state',json={'revision':9,'state':common})).status_code==200
+        saved=(await a.get('/sport/api/state')).json()['state']
+        assert saved['sessions'][d]['weightUnits']=={'squat':'lbs'}
+        assert saved['sessions'][d]['sets']['squat'][1]['weight']=='45.359237'
+        assert saved['sessions'][d]['originalPlan']==original
+        assert saved['templates']['home']==template
+        saved['sessions'][d]['plan']['exercises'][0]['sets']=3
+        saved['sessions'][d]['sets']['squat'].pop()
+        assert (await a.put('/sport/api/state',json={'revision':10,'state':saved})).status_code==200
+        saved=(await a.get('/sport/api/state')).json()['state']
+        assert len(saved['sessions'][d]['sets']['squat'])==3
+        assert saved['sessions'][d]['sets']['squat'][1]['weight']=='45.359237'
+        for units in [{'squat':'pounds'},{'unknown':'lbs'}]:
+            bad=copy.deepcopy(saved);bad['sessions'][d]['weightUnits']=units
+            assert (await a.put('/sport/api/state',json={'revision':11,'state':bad})).status_code==422
     await delete_user(owner.id)
     async with async_session() as db:
         assert await db.get(SportWorkspace,owner.id) is None
