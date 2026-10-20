@@ -41,5 +41,20 @@
     return true;
   }
 
-  return {KG_PER_LB, MAX_KG, toKg, fromKg, resizeSets};
+  function dashboardFocus(sessions, today) {
+    const current = sessions[today];
+    const next = Object.entries(sessions)
+      .filter(([day, session]) => day > today && session.status === 'planned')
+      .sort(([a], [b]) => a.localeCompare(b))[0] || null;
+    if (current && ['planned', 'started', 'skipped'].includes(current.status)) {
+      return {mode: 'today', current: [today, current], next};
+    }
+    const completed = Object.entries(sessions)
+      .filter(([day, session]) => day <= today && ['done', 'partial'].includes(session.status))
+      .sort(([a], [b]) => b.localeCompare(a))[0] || null;
+    if (completed) return {mode: 'completed', completed, next};
+    return next ? {mode: 'upcoming', next} : {mode: 'rest'};
+  }
+
+  return {KG_PER_LB, MAX_KG, toKg, fromKg, resizeSets, dashboardFocus};
 });
