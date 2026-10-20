@@ -11,6 +11,7 @@ from pydantic import Field
 from app.services.sport import ExerciseDefinition, StrictModel
 from app.services.sport_media import extract_video
 from app.services.sport_source import MUSCLES, EQUIPMENT, extract_instructions
+from app.services.sport_catalog import translated_instructions
 
 HOSTS = {"www.muscleandstrength.com", "muscleandstrength.com"}
 
@@ -79,5 +80,7 @@ async def import_exercise(name, url, *, transport=None):
                     content.extend(chunk)
                     if len(content) > 2 * 1024 * 1024:
                         raise ValueError("Страница слишком большая. Заполните карточку вручную.")
-                return parse_exercise(content.decode("utf-8", errors="replace"), name, url)
+                result = parse_exercise(content.decode("utf-8", errors="replace"), name, url)
+                result['instructions'] = translated_instructions(url, result['instructions'])
+                return result
     raise ValueError("Источник перенаправляет слишком много раз. Заполните карточку вручную.")

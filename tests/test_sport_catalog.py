@@ -19,6 +19,7 @@ def test_shared_catalog_is_translated_unique_and_preserves_legacy_ids():
         ExerciseDefinition.model_validate(record)
         assert re.search('[А-Яа-яЁё]', record['name'])
         assert record['instructions'].strip()
+        assert all(re.search('[А-Яа-яЁё]', step) for step in record['instructions'].splitlines())
         assert record['muscle'] != 'Не указано'
         assert all(step.strip() for step in record['instructions'].splitlines())
         assert record['en'] and record['sourceUrl'].startswith('https://www.muscleandstrength.com/exercises/')
@@ -113,3 +114,48 @@ def test_builder_preserves_source_instructions_and_requires_full_details():
     details['pages'] = {}
     with pytest.raises(ValueError, match='cover exactly'):
         build(source, {'ms_test': 'Присед'}, details=details)
+
+
+def test_russian_instruction_publication_checks_alignment_numbers_and_source_version():
+    import hashlib
+    source = {'summary': {'complete': True, 'errors': {}, 'source': 'source', 'updated_at': 'today'},
+              'exercises': [{'id': 'ms_test', 'name_en': 'Front Squat',
+                             'url': 'https://www.muscleandstrength.com/exercises/front-squat.html',
+                             'muscle_groups': ['Quads'], 'equipment': ['Barbell'], 'preview_url': ''}]}
+    url = source['exercises'][0]['url']
+    original = 'Bend to 90 degrees.\nRepeat 10 times.'
+    details = {'version': 1, 'summary': {'complete': True, 'parsed_at': 'today'},
+               'pages': {url: {'instructions': original}}}
+    russian = {'version': 1, 'language': 'ru', 'translated_at': 'today', 'exercises': {
+        url: {'source_sha256': hashlib.sha256(original.encode()).hexdigest(),
+              'instructions': 'Согнитесь до угла 90 градусов.\nПовторите 10 раз.'}}}
+    result = build(source, {'ms_test': 'Присед'}, details=details, instruction_translations=russian)
+    assert result['instructions_language'] == 'ru'
+    assert result['exercises']['front']['instructions'].startswith('Согнитесь')
+    for bad_text, error in [('Один шаг.', 'preserve every'), ('Bend 90 degrees.\nRepeat 10 times.', 'preserve every'),
+                            ('Согнитесь до 45 градусов.\nПовторите 10 раз.', 'preserve source numbers')]:
+        bad = copy.deepcopy(russian)
+        bad['exercises'][url]['instructions'] = bad_text
+        with pytest.raises(ValueError, match=error):
+            build(source, {'ms_test': 'Присед'}, details=details, instruction_translations=bad)
+    russian['exercises'][url]['source_sha256'] = 'stale'
+    with pytest.raises(ValueError, match='stale'):
+        build(source, {'ms_test': 'Присед'}, details=details, instruction_translations=russian)
+    russian['exercises'] = {}
+    with pytest.raises(ValueError, match='cover exactly'):
+        build(source, {'ms_test': 'Присед'}, details=details, instruction_translations=russian)
+
+
+def test_import_reuses_russian_instructions_only_for_matching_source():
+    import hashlib
+    from app.services import sport_catalog
+    original = 'Keep your back straight.'
+    url = 'https://www.muscleandstrength.com/exercises/front-squat.html'
+    saved = sport_catalog._TRANSLATED_SOURCES
+    try:
+        sport_catalog._TRANSLATED_SOURCES = {url: ('Держите спину прямо.', hashlib.sha256(original.encode()).hexdigest())}
+        assert sport_catalog.translated_instructions(url, original) == 'Держите спину прямо.'
+        assert sport_catalog.translated_instructions(url, original + ' New step.') == original + ' New step.'
+        assert sport_catalog.translated_instructions(url + '?other', original) == original
+    finally:
+        sport_catalog._TRANSLATED_SOURCES = saved
