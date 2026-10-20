@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.services.sport_catalog import SHARED_EXERCISE_IDS
+from app.services.sport_catalog import SHARED_EXERCISES, SHARED_EXERCISE_IDS
 
 EXERCISES = {"press", "front", "rdl", "curl", "calf", "squat", "bridge", "bench", "row"}
 TEMPLATES = {"lower": ["front", "press", "rdl", "curl", "calf"],
@@ -245,6 +245,7 @@ class ChangeEvent(StrictModel):
 class Snapshot(StrictModel):
     version: Literal[1] = 1
     exercises: dict[ExerciseID, ExerciseDefinition] = Field(default_factory=dict, max_length=500)
+    exerciseOverrides: dict[ExerciseID, dict[str, str | bool]] = Field(default_factory=dict, max_length=1133)
     deletedTemplates: list[TemplateID] = Field(default_factory=list, max_length=1000)
     templates: dict[TemplateID, WorkoutPlan] = Field(default_factory=dict, max_length=100)
     sessions: dict[Day, TrainingSession] = Field(default_factory=dict, max_length=3000)
@@ -261,6 +262,11 @@ class Snapshot(StrictModel):
         known = active | archived
         if set(self.exercises) & (EXERCISES | SHARED_EXERCISE_IDS):
             raise ValueError("Built-in exercises cannot be overwritten")
+        for key, changes in self.exerciseOverrides.items():
+            if key not in SHARED_EXERCISE_IDS:
+                raise ValueError("Overrides must reference a shared exercise")
+            # Store only changed fields so later catalog corrections still reach this account.
+            ExerciseDefinition.model_validate({**SHARED_EXERCISES[key], **changes})
         exercise_ids = EXERCISES | SHARED_EXERCISE_IDS | set(self.exercises)
 
         def check_plan(plan):
@@ -341,6 +347,7 @@ def upgrade_workspace(document):
     """
     result = deepcopy(document)
     result.setdefault("exercises", {})
+    result.setdefault("exerciseOverrides", {})
     result.setdefault("deletedTemplates", [])
     result["templates"] = {key: value for key, value in
                            {**default_templates(), **result.get("templates", {})}.items()

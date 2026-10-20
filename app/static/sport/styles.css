@@ -22,3 +22,7 @@
 /* Primary exercise targets on front/back silhouettes. */
 .hero{display:grid;grid-template-columns:minmax(0,1fr) 148px;gap:18px}.hero .hero-content{grid-column:1;grid-row:1;max-width:none}.hero .hero-content>.inline{flex-wrap:wrap}.muscle-map{grid-column:2;grid-row:1;align-self:center;margin:0;width:148px;text-align:center}.muscle-map svg{display:block;width:100%;height:auto}.muscle-map .body-outline{fill:none;stroke:#829579;stroke-width:1.7}.muscle-map .muscle-region{fill:#344535;stroke:#53664a;stroke-width:.6}.muscle-map .muscle-region.active{fill:var(--green);stroke:var(--green)}.muscle-map text{fill:#b2c1ab;font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.muscle-map figcaption{font-size:10px;line-height:1.6;color:#c8d9be;margin-top:7px;overflow-wrap:anywhere}.muscle-map figcaption small{display:block;font-size:9px;color:var(--muted);margin-top:3px}
 @media(max-width:650px){.hero{grid-template-columns:minmax(0,1fr);gap:16px}.muscle-map{grid-column:1;grid-row:2;width:100%;display:flex;align-items:center;justify-content:center;gap:20px;border-top:1px solid #465a3d;padding-top:14px;text-align:left}.muscle-map svg{width:132px;flex-shrink:0}.muscle-map figcaption{max-width:150px;font-size:11px;margin:0}}
+
+.exercise-card-tools{margin-bottom:16px;gap:12px;flex-wrap:wrap}
+.tech-grid ol{padding-left:24px}
+.tech-grid li{margin:12px 0;line-height:1.65}

@@ -91,3 +91,29 @@ def test_video_crawl_stops_on_access_restrictions(tmp_path, monkeypatch, block):
     assert result["summary"]["pending"] == [SOURCE + "test"]
     assert len(hits) == (1 if block == "robots" else 2)
     assert json.loads((tmp_path / "videos.json").read_text())["pages"] == {}
+
+
+def test_instruction_parser_reads_wrapped_steps_without_tracking_items_or_next_section():
+    from app.services.sport_lookup import parse_exercise
+    html = '''<h1>Seated Dumbbell Front Raise Video Exercise Guide</h1>
+    <div>Target Muscle Group Shoulders Exercise Type Strength Equipment Required Dumbbell Mechanics Isolation</div>
+    <h2>Seated Dumbbell Front Raise Instructions</h2><span><div><ol>
+    <li style="display:none">&nbsp;</li><li>Sit&nbsp;on a <a href="/">bench</a>.</li>
+    <li>Raise your arms.<p>Keep a slight bend.</p></li><li>&nbsp;</li></ol></div></span>
+    <h2>Tips</h2><ul><li>This belongs to another section.</li></ul>
+    <footer><li>Subscribe</li></footer>'''
+    result = parse_exercise(html, 'Подъём гантелей перед собой сидя', SOURCE + 'seated-dumbbell-front-raise.html')
+    assert result['instructions'] == 'Sit on a bench.\nRaise your arms. Keep a slight bend.'
+    assert result['muscle'] == 'Плечи'
+
+
+def test_instruction_parser_supports_paragraphs_and_does_not_silently_truncate():
+    from app.services.sport_lookup import parse_exercise
+    html = '''<h1>Exercise Guide</h1><div>Target Muscle Group Upper Back Exercise Type Strength
+    Equipment Required Kettle Bells Mechanics Compound</div><h3>Exercise Instructions</h3>
+    <div><p>First step.</p><p>Second step.</p></div><h3>Comments</h3><p>Ignore.</p>'''
+    result = parse_exercise(html, 'Упражнение', SOURCE + 'test.html')
+    assert result['instructions'] == 'First step.\nSecond step.'
+    assert result['muscle'] == 'Верх спины' and result['equipment'] == 'Гири'
+    with pytest.raises(ValueError):
+        parse_exercise(html.replace('First step.', 'x' * 4001), 'Упражнение', SOURCE + 'test.html')

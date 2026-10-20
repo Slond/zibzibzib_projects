@@ -153,6 +153,24 @@ async def check():
         for units in [{'squat':'pounds'},{'unknown':'lbs'}]:
             bad=copy.deepcopy(saved);bad['sessions'][d]['weightUnits']=units
             assert (await a.put('/sport/api/state',json={'revision':11,'state':bad})).status_code==422
+        # Shared exercise edits remain private, retain references/results and reset cleanly.
+        saved=(await a.get('/sport/api/state')).json()['state']
+        historical=copy.deepcopy(saved['sessions'])
+        saved['exerciseOverrides'][shared_id]={'name':'Мой вариант', 'instructions':'Первый шаг.\nВторой шаг.', 'videoUrl':'https://youtu.be/9xAkoz95IFE'}
+        assert (await a.put('/sport/api/state',json={'revision':11,'state':saved})).status_code==200
+        edited=(await a.get('/sport/api/state')).json()['state']
+        assert edited['exerciseOverrides'][shared_id]['name']=='Мой вариант'
+        assert edited['sessions']==historical
+        assert (await b.get('/sport/api/state')).json()['state']['exerciseOverrides']=={}
+        own_page=(await a.get('/sport')).text
+        boot=json.loads(re.search(r'<script id="sport-boot" type="application/json">(.*?)</script>',own_page,re.S).group(1))
+        assert boot['catalog'][shared_id]['name']!='Мой вариант'
+        assert boot['state']['exerciseOverrides'][shared_id]['name']=='Мой вариант'
+        bad=copy.deepcopy(edited);bad['exerciseOverrides'][shared_id]={'sourceUrl':'javascript:alert(1)'}
+        assert (await a.put('/sport/api/state',json={'revision':12,'state':bad})).status_code==422
+        del edited['exerciseOverrides'][shared_id]
+        assert (await a.put('/sport/api/state',json={'revision':12,'state':edited})).status_code==200
+        assert (await a.get('/sport/api/state')).json()['state']['sessions']==historical
     await delete_user(owner.id)
     async with async_session() as db:
         assert await db.get(SportWorkspace,owner.id) is None

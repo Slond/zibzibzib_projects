@@ -10,14 +10,10 @@ from pydantic import Field
 
 from app.services.sport import ExerciseDefinition, StrictModel
 from app.services.sport_media import extract_video
+from app.services.sport_source import MUSCLES, EQUIPMENT, extract_instructions
 
 HOSTS = {"www.muscleandstrength.com", "muscleandstrength.com"}
-LABELS = {"Quads": "Квадрицепсы", "Hamstrings": "Задняя поверхность бедра", "Glutes": "Ягодицы",
-          "Chest": "Грудь", "Lats": "Широчайшие", "Middle Back": "Спина", "Lower Back": "Поясница",
-          "Shoulders": "Плечи", "Biceps": "Бицепс", "Triceps": "Трицепс", "Abs": "Пресс", "Calves": "Икры",
-          "Machine": "Тренажёр", "Barbell": "Штанга", "Dumbbell": "Гантели", "Dumbbells": "Гантели",
-          "Bodyweight": "Без инвентаря", "Cable": "Блочный тренажёр", "Kettlebells": "Гири",
-          "Bands": "Резинка", "Exercise Ball": "Фитбол", "Other": "Другое"}
+
 
 
 class ExerciseImport(StrictModel):
@@ -53,26 +49,15 @@ def parse_exercise(html, name, url):
 
     muscle = profile("Target Muscle Group", "Exercise Type|Equipment Required")
     equipment = profile("Equipment Required", "Mechanics|Force Type|Experience Level|Secondary Muscles")
-    lines = []
-    for section in soup.find_all(re.compile(r"^h[2-4]$")):
-        if not re.search(r"\bInstructions\s*$", section.get_text(" ", strip=True), re.I):
-            continue
-        # Article content can be wrapped; stop before any subsequent section.
-        for node in section.next_elements:
-            if getattr(node, "name", None) in {"h2", "h3", "h4", "h5"}:
-                break
-            if getattr(node, "name", None) == "li":
-                lines.append(node.get_text(" ", strip=True))
-        if lines:
-            break
+    instructions = extract_instructions(soup)
     if not muscle or not equipment:
         raise ValueError("Не удалось прочитать мышцы или оборудование. Заполните карточку вручную.")
     image_tag = soup.find("meta", attrs={"property": "og:image"})
     image = urljoin(url, image_tag.get("content", "")) if image_tag else ""
     return ExerciseDefinition(name=name.strip(), en=english[:120],
-                              muscle=LABELS.get(muscle, muscle)[:80],
-                              equipment=LABELS.get(equipment, equipment)[:80],
-                              instructions="\n".join(lines)[:4000], sourceUrl=url,
+                              muscle=MUSCLES.get(muscle, muscle)[:80],
+                              equipment=EQUIPMENT.get(equipment, equipment)[:80],
+                              instructions=instructions, sourceUrl=url,
                               videoUrl=video, imageUrl=image, bodyweight=equipment == "Bodyweight",
                               attribution="Muscle & Strength").model_dump()
 
